@@ -1,0 +1,54 @@
+# Generated files by STM32CubeIDE
+Debug/
+Release/
+*.o
+*.d
+*.elf
+*.map
+*.hex
+*.bin
+*.lst
+*.srec
+*.bak
+*.dep
+*.lst
+*.cprj
+*.launch
+
+# STM32CubeIDE configuration files (Unignored as requested)
+# (Retaining these files as they are crucial for project configuration)
+#*.ioc
+#*.mxproject
+#.settings/
+#.metadata/
+
+# macOS specific files
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon 
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Build and dependencies directories
+build/
+dependencies/
+
+# Editor backup files
+*~
+*.swp
+*.tmp
+
+# Other files and directories to potentially ignore
+# (Keeping as per request, adjust if your project requires these files)
+*.log
+#*.csv
+*.dat
+*.out
+*.pid
+*.seed
+#*.svg
+nbproject/
