@@ -1,4 +1,18 @@
 /**
+ ******************************************************************************
+ * @file           : color.h
+ ******************************************************************************
+ * @attention
+ *
+ * Copyright (C) 2018-present Reso-nance Numerique.
+ * All rights reserved.
+  *
+  * This software is licensed under terms that can be found in the LICENSE file
+  * in the root directory of this software component.
+ *
+ ******************************************************************************
+ */
+
   ******************************************************************************
   * @file    Display/LTDC_Paint/Inc/color.h 
   * @author  MCD Application Team

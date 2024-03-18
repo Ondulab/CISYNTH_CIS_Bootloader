@@ -1,4 +1,4 @@
-/*
+/**
  * Security Level: Macronix Proprietary
  * COPYRIGHT (c) 2010-2017 MACRONIX INTERNATIONAL CO., LTD
  * SPI Flash Low Level Driver (LLD) Sample Code
@@ -7,7 +7,6 @@
  *
  * $Id: MX25_CMD.c,v 1.28 2017/01/10 01:32:35 mxclldb1 Exp $
  */
-
 #include "MX25L.h"
 #include "quadspi.h"
 

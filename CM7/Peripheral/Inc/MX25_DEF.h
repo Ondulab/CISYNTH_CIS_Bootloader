@@ -1,4 +1,4 @@
-/*
+/**
  * Security Level: Macronix Proprietary
  * COPYRIGHT (c) 2010-2017 MACRONIX INTERNATIONAL CO., LTD
  * SPI Flash Low Level Driver (LLD) Sample Code
@@ -7,7 +7,6 @@
  *
  * $Id: MX25_DEF.h,v 1.620 2017/11/08 08:50:09 mxclldb1 Exp $
  */
-
 #ifndef    __MX25_DEF_H__
 #define    __MX25_DEF_H__
 /*
