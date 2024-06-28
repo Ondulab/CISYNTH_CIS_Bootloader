@@ -45,16 +45,15 @@ _Min_Stack_Size = 0x800; /* required amount of stack */
 /* Memories definition */
 MEMORY
 {
-  FLASH (rx)    			: ORIGIN = 0x08000000, LENGTH = 768K 
-  CIS_FLASH (rxw) 			: ORIGIN = 0x08000000 + LENGTH(FLASH), LENGTH = 256K 				/* Memory is divided. Actual start is 0x08000000 and actual length is 2048K */
-  DTCM (xrw)   				: ORIGIN = 0x20000000, LENGTH = 128K
-  RAM_SHARED (rw) 			: ORIGIN = 0x24000000, LENGTH = 64
-  RAM_SHARED_CACHED (rw) 	: ORIGIN = 0x24000000 + LENGTH(RAM_SHARED), LENGTH = 441K
-  RAM_AXI (xrw)   			: ORIGIN = 0x24000000 + LENGTH(RAM_SHARED) + LENGTH(RAM_SHARED_CACHED), LENGTH = 512K - (LENGTH(RAM_SHARED) + LENGTH(RAM_SHARED_CACHED))
+  FLASH (rx)    			: ORIGIN = 0x08000000, LENGTH = 128K 
+  DTCM (rw)   				: ORIGIN = 0x20000000, LENGTH = 128K
+  RAM_SHARED (rw) 			: ORIGIN = 0x24000000, LENGTH = 128
+  RAM_SHARED_CACHED (rw) 	: ORIGIN = 0x24000000 + LENGTH(RAM_SHARED), LENGTH = 120K
+  RAM_AXI (rwx)   			: ORIGIN = 0x24000000 + LENGTH(RAM_SHARED) + LENGTH(RAM_SHARED_CACHED), LENGTH = 512K - (LENGTH(RAM_SHARED) + LENGTH(RAM_SHARED_CACHED))
   RAM_D1 (r)      			: ORIGIN = 0x30000000, LENGTH = 128K
-  RAM_D2 (xrw)   			: ORIGIN = 0x30020000, LENGTH = 160K
-  RAM_D3 (xrw)    			: ORIGIN = 0x38000000, LENGTH = 64K
-  ITCMRAM (xrw)   			: ORIGIN = 0x00000000, LENGTH = 64K
+  RAM_D2 (rw)   			: ORIGIN = 0x30020000, LENGTH = 160K
+  RAM_D3 (rw)    			: ORIGIN = 0x38000000, LENGTH = 64K
+  ITCMRAM (rw)   			: ORIGIN = 0x00000000, LENGTH = 64K
 }
 
 /* Sections */
@@ -136,34 +135,6 @@ SECTIONS
     PROVIDE_HIDDEN (__fini_array_end = .);
     . = ALIGN(4);
   } >FLASH
-  
-  /* autres sections... */
-  
-  .tcmram :
-  {
-    . = ALIGN(4);
-    *(.tcmram*) /* toutes les données avec l'attribut .tcmram */
-    . = ALIGN(4);
-  } >DTCM
-  
-  .shared :
-  {
-    KEEP (*(.shared_var));   
-  } >RAM_SHARED
-  
-  .shared_cached :
-  {
-    KEEP (*(.imageData));
-    KEEP (*(.rgbBuffers));
-    KEEP (*(.imuData));
-    KEEP (*(.cisData));
-    KEEP (*(.cisDataCpy)); 
-    KEEP (*(.cisRAWImage));     
-    KEEP (*(.rgbCalibration)); 
-    KEEP (*(.cisLeds_Calibration));        
-    KEEP (*(.cisCals));
-    KEEP (*(.rgbCals));  
-  } >RAM_SHARED_CACHED
 
   /* Used by the startup to initialize data */
   _sidata = LOADADDR(.data);

@@ -17,7 +17,6 @@
 #include "main.h"
 #include "config.h"
 #include "basetypes.h"
-#include "shared.h"
 
 #include "stdlib.h"
 #include "stdio.h"
@@ -52,6 +51,7 @@ static uint32_t stm32_flashGetSector(uint32_t Address);
  */
 uint32_t stm32_flashGetSector(uint32_t Address)
 {
+#if 0
 	uint32_t sector = 0;
 
 	if(((Address < ADDR_FLASH_SECTOR_1_BANK1) && (Address >= ADDR_FLASH_SECTOR_0_BANK1)) || \
@@ -100,6 +100,7 @@ uint32_t stm32_flashGetSector(uint32_t Address)
 	}
 
 	return sector;
+#endif
 }
 
 /**
@@ -110,6 +111,7 @@ uint32_t stm32_flashGetSector(uint32_t Address)
  */
 void stm32_flashCalibrationRW(CIS_FlashRW_TypeDef RW)
 {
+#if 0
 	static FLASH_EraseInitTypeDef eraseInitStruct = {0};
 	uint32_t firstSector = 0, nbOfSectors = 0, sectorError = 0, address = 0, idx = 0;
 	__IO uint32_t memoryProgramStatus = 0;
@@ -195,4 +197,5 @@ void stm32_flashCalibrationRW(CIS_FlashRW_TypeDef RW)
 	default :
 		Error_Handler();
 	}
+#endif
 }
