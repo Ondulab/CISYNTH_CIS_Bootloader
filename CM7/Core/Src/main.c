@@ -30,8 +30,10 @@
 /* USER CODE BEGIN Includes */
 #include "ssd1362.h"
 #include "pictures.h"
+#include "stm32_flash.h"
 
 #include "config.h"
+#include "shared.h"
 #include "basetypes.h"
 #include "stdio.h"
 
@@ -79,13 +81,13 @@ static void MPU_Config(void);
 #define SD_CARD_PATH "/"
 #define FILE_NAME "CM7.bin"
 #define FILE_NAME_2 "CM4.bin"
-#define FILE_NAME_3 "QSPI.bin"
+//#define FILE_NAME_3 "QSPI.bin"
 
 /* Buffer size for reading data */
 #define BUFFER_SIZE 512
 
-#define FW_CM7_START_ADD 0x08020000
-#define FW_CM4_START_ADD 0x08100000
+#define FW_CM7_START_ADDR 0x08040000
+#define FW_CM4_START_ADDR 0x08100000
 
 typedef void (*pFunction)(void);
 
@@ -149,41 +151,59 @@ static void gotoFirmware(uint32_t fwFlashStartAdd)
 	appEntry();
 }
 
-
 bool updateFirmware(const TCHAR* fwPath, uint32_t flashBank, uint32_t flashSector, uint32_t NbSectors, uint32_t fwFlashStartAdd)
 {
-	uint8_t binFileRes[50], readBytes[BUFFER_SIZE];
-	UINT bytesRead;
-	FSIZE_t file_size;
-	FIL file;
-	uint32_t flashAdd, addCNTR;
+    uint8_t binFileRes[50], readBytes[BUFFER_SIZE];
+    UINT bytesRead;
+    FSIZE_t file_size;
+    FIL file;
+    uint32_t flashAdd, addCNTR;
+    HAL_StatusTypeDef status;
 
-	if (f_open(&file, fwPath, FA_READ) == FR_OK) {
+    if (f_open(&file, fwPath, FA_READ) == FR_OK) {
 
-		file_size = f_size(&file);
+        file_size = f_size(&file);
 
-		sprintf(binFileRes, ".bin Size: %lu bytes \n\r", file_size);
-		HAL_UART_Transmit(&huart1, binFileRes, 20, 100);
+        sprintf((char *)binFileRes, ".bin Size: %lu bytes \n\r", file_size);
+        HAL_UART_Transmit(&huart1, binFileRes, 20, 100);
 
-		//erase_app_memory(flashBank, flashSector, NbSectors);
+        status = STM32Flash_erase_app_memory(flashBank, flashSector, NbSectors);
+        if (status != HAL_OK) {
+            HAL_UART_Transmit(&huart1, (uint8_t *)"Erase Failed\n\r", 14, 100);
+            f_close(&file);
+            return false;
+        }
 
-		flashAdd = fwFlashStartAdd;
-		addCNTR  = 0;
+        flashAdd = fwFlashStartAdd;
+        addCNTR  = 0;
 
-		while (f_read(&file, readBytes, BUFFER_SIZE, &bytesRead) == FR_OK && bytesRead > 0) {
-			// Process the read data here
-			for(uint32_t i=0; i<16; i++){
-				//Flash_write32B(readBytes+(i*32), flashAdd+addCNTR);
-				addCNTR += 32;
-			}
-			memset(readBytes, 0xFF, sizeof(readBytes));
-		}
-		f_close(&file);
-	}
+        while (f_read(&file, readBytes, BUFFER_SIZE, &bytesRead) == FR_OK && bytesRead > 0) {
+            for (uint32_t i = 0; i < 16; i++) {
+                if ((flashAdd + addCNTR) % 4 != 0) {
+                    HAL_UART_Transmit(&huart1, (uint8_t *)"Address Misaligned\n\r", 21, 100);
+                    f_close(&file);
+                    return false;
+                }
 
-	return true;
+                status = STM32Flash_write32B(readBytes + (i * 32), flashAdd + addCNTR);
+                if (status != HAL_OK) {
+                    HAL_UART_Transmit(&huart1, (uint8_t *)"Write Failed\n\r", 14, 100);
+                    f_close(&file);
+                    return false;
+                }
+                addCNTR += 32;
+            }
+            memset(readBytes, 0xFF, sizeof(readBytes));
+        }
+
+        f_close(&file);
+    } else {
+        HAL_UART_Transmit(&huart1, (uint8_t *)"File Open Failed\n\r", 18, 100);
+        return false;
+    }
+
+    return true;
 }
-
 
 bool updateExternalFlash(const TCHAR* fwPath)
 {
@@ -197,7 +217,7 @@ bool updateExternalFlash(const TCHAR* fwPath)
 
 		file_size = f_size(&file);
 
-		sprintf(binFileRes, ".bin Size: %lu bytes \n\r", file_size);
+		sprintf((char *)binFileRes, ".bin Size: %lu bytes \n\r", file_size);
 		HAL_UART_Transmit(&huart1, binFileRes, 20, 100);
 
 		//		if (CSP_QSPI_Erase_Chip() != HAL_OK)
@@ -224,15 +244,74 @@ bool updateExternalFlash(const TCHAR* fwPath)
 	return true;
 }
 
-void gui_displayBooting(void)
+void gui_displayUpdateStarted(void)
 {
-    ssd1362_clearBuffer();
+	ssd1362_clearBuffer();
 
-    // Draw border
-    ssd1362_drawRect(0, 0, 255, 63, 0xF, false);
+	// Draw border
+	ssd1362_fillRect(0, DISPLAY_HEAD_Y1POS, DISPLAY_WIDTH, DISPLAY_HEAD_Y2POS, BANNER_BACKGROUND_COLOR, true);
+	ssd1362_drawRect(0, 0, 255, 63, BANNER_BACKGROUND_COLOR, false);
 
-    // Display the frame buffer
-    ssd1362_writeFullBuffer();
+	ssd1362_drawString(0, DISPLAY_HEAD_Y1POS + 1, (int8_t *)"        FIRMWARE UPDATE       ", 0xF, 8);
+
+	ssd1362_drawString(0, 45, 					  (int8_t *)"        DO NOT POWER OFF      ", 0xF, 8);
+
+	// Display the frame buffer
+	ssd1362_writeFullBuffer();
+}
+
+void gui_displayUpdateFailed(void)
+{
+	ssd1362_clearBuffer();
+
+	// Draw border
+	ssd1362_fillRect(0, DISPLAY_HEAD_Y1POS, DISPLAY_WIDTH, DISPLAY_HEAD_Y2POS, BANNER_BACKGROUND_COLOR, false);
+	ssd1362_drawRect(0, 0, 255, 63, BANNER_BACKGROUND_COLOR, false);
+
+	ssd1362_drawString(0, DISPLAY_HEAD_Y1POS + 1, (int8_t *)"        FIRMWARE UPDATE       ", 0xF, 8);
+
+	ssd1362_drawString(0, 25, 					  (int8_t *)"         UPDATE FAILED        ", 0xF, 8);
+
+	ssd1362_drawString(0, 45, 					  (int8_t *)"        DO NOT POWER OFF      ", 0xF, 8);
+
+	// Display the frame buffer
+	ssd1362_writeFullBuffer();
+}
+
+void gui_displayUpdateWrited(void)
+{
+	ssd1362_clearBuffer();
+
+	// Draw border
+	ssd1362_fillRect(0, DISPLAY_HEAD_Y1POS, DISPLAY_WIDTH, DISPLAY_HEAD_Y2POS, BANNER_BACKGROUND_COLOR, false);
+	ssd1362_drawRect(0, 0, 255, 63, BANNER_BACKGROUND_COLOR, false);
+
+	ssd1362_drawString(0, DISPLAY_HEAD_Y1POS + 1, (int8_t *)"        FIRMWARE UPDATE       ", 0xF, 8);
+
+	ssd1362_drawString(0, 25, 					  (int8_t *)"     WRITE SUCCESS - REBOOT   ", 0xF, 8);
+
+	ssd1362_drawString(0, 45, 					  (int8_t *)"        DO NOT POWER OFF      ", 0xF, 8);
+
+	// Display the frame buffer
+	ssd1362_writeFullBuffer();
+}
+
+void gui_displayUpdateSuccess(void)
+{
+	ssd1362_clearBuffer();
+
+	// Draw border
+	ssd1362_fillRect(0, DISPLAY_HEAD_Y1POS, DISPLAY_WIDTH, DISPLAY_HEAD_Y2POS, BANNER_BACKGROUND_COLOR, true);
+	ssd1362_drawRect(0, 0, 255, 63, 0xF, false);
+
+	ssd1362_drawString(0, DISPLAY_HEAD_Y1POS + 1, (int8_t *)"        FIRMWARE UPDATE       ", 0xF, 8);
+
+	ssd1362_drawString(0, 25, 					  (int8_t *)"    FIRMWARE UPDATE SUCCESS   ", 0xF, 8);
+
+	ssd1362_drawString(0, 45, 					  (int8_t *)"            REBOOT            ", 0xF, 8);
+
+	// Display the frame buffer
+	ssd1362_writeFullBuffer();
 }
 
 /* USER CODE END 0 */
@@ -247,7 +326,7 @@ int main(void)
 
 	/* USER CODE END 1 */
 	/* USER CODE BEGIN Boot_Mode_Sequence_0 */
-	int32_t timeout;
+
 	/* USER CODE END Boot_Mode_Sequence_0 */
 
 	/* MPU Configuration--------------------------------------------------------*/
@@ -261,15 +340,7 @@ int main(void)
 	SCB_EnableDCache();
 
 	/* USER CODE BEGIN Boot_Mode_Sequence_1 */
-	/* Wait until CPU2 boots and enters in stop mode or timeout*/
-#if 0
-	timeout = 0xFFFF;
-	while((__HAL_RCC_GET_FLAG(RCC_FLAG_D2CKRDY) != RESET) && (timeout-- > 0));
-	if ( timeout < 0 )
-	{
-		Error_Handler();
-	}
-#endif
+
 	/* USER CODE END Boot_Mode_Sequence_1 */
 	/* MCU Configuration--------------------------------------------------------*/
 
@@ -283,24 +354,39 @@ int main(void)
 	/* Configure the system clock */
 	SystemClock_Config();
 	/* USER CODE BEGIN Boot_Mode_Sequence_2 */
-	/* When system initialization is finished, Cortex-M7 will release Cortex-M4 by means of
-HSEM notification */
-	/*HW semaphore Clock enable*/
-	__HAL_RCC_HSEM_CLK_ENABLE();
-	/*Take HSEM */
-	HAL_HSEM_FastTake(HSEM_ID_0);
-	/*Release HSEM in order to notify the CPU2(CM4)*/
-	HAL_HSEM_Release(HSEM_ID_0,0);
-	/* wait until CPU2 wakes up from stop mode */
-	timeout = 0xFFFF;
-	while((__HAL_RCC_GET_FLAG(RCC_FLAG_D2CKRDY) == RESET) && (timeout-- > 0));
-	if ( timeout < 0 )
-	{
-		Error_Handler();
-	}
+
 	/* USER CODE END Boot_Mode_Sequence_2 */
 
 	/* USER CODE BEGIN SysInit */
+
+	PersistentData dataRead;
+	STM32Flash_readPersistentData(&dataRead);
+
+	if (dataRead.updateState == FW_UPDATE_NONE)
+	{
+		gotoFirmware(FW_CM7_START_ADDR);
+	}
+
+	if (dataRead.updateState == FW_UPDATE_FLASHED)
+	{
+	    PersistentData dataToWrite = {
+	        .updateState = FW_UPDATE_TO_TEST,
+	        .padding = {0}
+	    };
+
+		/* reboot after we close the connection. */
+	    HAL_StatusTypeDef status = STM32Flash_writePersistentData(&dataToWrite);
+	    if (status == HAL_OK)
+	    {
+	        printf("Firmware update must be tested now \n");
+	    }
+	    else
+	    {
+	        printf("Failed to write firmware update status in STM32 flash\n");
+	    }
+
+		gotoFirmware(FW_CM7_START_ADDR);
+	}
 
 	/* USER CODE END SysInit */
 
@@ -310,8 +396,8 @@ HSEM notification */
 	MX_USART1_UART_Init();
 	MX_RNG_Init();
 	MX_CRC_Init();
-	//MX_QUADSPI_Init();
-	//MX_FATFS_Init();
+	MX_QUADSPI_Init();
+	MX_FATFS_Init();
 	/* USER CODE BEGIN 2 */
 
 	printf("START BOOTLOADER\n");
@@ -320,68 +406,94 @@ HSEM notification */
 	ssd1362_clearBuffer();
 	ssd1362_writeFullBuffer();
 
-	//ssd1362_drawBmp(warning_Img, 10, 10, 48, 43, 15, 1);
-	gui_displayBooting();
+	if (dataRead.updateState == FW_UPDATE_DONE)
+	{
+	    PersistentData dataToWrite = {
+	        .updateState = FW_UPDATE_NONE,
+	        .padding = {0}
+	    };
+
+		/* reboot after we close the connection. */
+	    HAL_StatusTypeDef status = STM32Flash_writePersistentData(&dataToWrite);
+	    if (status == HAL_OK)
+	    {
+	        printf("Firmware update done, reset firmware update flag\n");
+	    }
+	    else
+	    {
+	        printf("Failed to write firmware update status in STM32 flash\n");
+	    }
+
+		gui_displayUpdateSuccess();
+
+		printf("Rebooting in 3\n");
+		/* Wait 3 seconds. */
+		HAL_Delay(3000);
+		NVIC_SystemReset();
+	}
+
+	gui_displayUpdateStarted();
 
 	printf("- FILE INITIALIZATION -\n");
 
 	FRESULT fres; // Variable to store the result of FATFS operations
 
 	// Attempt to mount the file system
-#if 0
+
 	fres = f_mount(&fs, "0:", 1); // 1 to mount immediately
 	if (fres != FR_OK)
 	{
 		printf("FS mount ERROR\n");
+		gui_displayUpdateFailed();
 	}
 	else
 	{
 		printf("FS mount SUCCESS\n");
-	}
-#endif
-
-	printf("Preparing to jump to application \n");
-
-	// Reset all required system peripherals and disable interrupts
-	//MX_GPIO_DeInit();
-	HAL_SRAM_MspDeInit(&hsram1);
-	//HAL_UART_MspDeInit(&huart1);
-	HAL_RNG_MspDeInit(&hrng);
-	HAL_CRC_MspDeInit(&hcrc);
-	//HAL_QSPI_MspDeInit(&hqspi);
-
-	//HAL_DeInit();
-
-
-	//	HAL_Delay(5000);
-
-	//    	if (CSP_QUADSPI_Init() != HAL_OK)
-	//    	{
-	//    		Error_Handler();
-	//    	}
-
-	// Mount the SD card
-	FATFS fs;
-	uint8_t mountRes;
-
-	//mountRes = f_mount(&fs, SD_CARD_PATH, 1);
-	if (mountRes == FR_OK) {
 
 		// UPDATE CM7 FLASH REGION
-		//  updateFirmware(FILE_NAME, FLASH_BANK_1, FLASH_SECTOR_1, 7, FW_CM7_START_ADD);
+		updateFirmware(FILE_NAME, FLASH_BANK_1, FLASH_SECTOR_2, 6, FW_CM7_START_ADDR);
 
 		// UPDATE CM4 FLASH REGION
-		//  updateFirmware(FILE_NAME_2, FLASH_BANK_2, FLASH_SECTOR_0, 8, FW_CM4_START_ADD);
+		updateFirmware(FILE_NAME_2, FLASH_BANK_2, FLASH_SECTOR_0, 8, FW_CM4_START_ADDR);
 
 		// UPDATE QSPI
-		//  updateExternalFlash(FILE_NAME_3);
+		//updateExternalFlash(FILE_NAME_3);
 	}
-	//HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_SET);
-	//HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, GPIO_PIN_SET);
+
+	printf("Preparing to reset all cores \n");
+
+    PersistentData dataToWrite = {
+        .updateState = FW_UPDATE_FLASHED,
+        .padding = {0}
+    };
+
+	/* reboot after we close the connection. */
+    HAL_StatusTypeDef status = STM32Flash_writePersistentData(&dataToWrite);
+    if (status == HAL_OK)
+    {
+        printf("Firmware update flashed\n");
+    }
+    else
+    {
+        printf("Failed to write firmware update status in STM32 flash\n");
+    }
+
+    gui_displayUpdateWrited();
+
+	printf("Rebooting in 3\n");
+	/* Wait 5 seconds. */
+	HAL_Delay(3000);
+	NVIC_SystemReset();
+
+	// Reset all required system peripherals and disable interrupts
+	HAL_SRAM_MspDeInit(&hsram1);
+	HAL_UART_MspDeInit(&huart1);
+	HAL_RNG_MspDeInit(&hrng);
+	HAL_CRC_MspDeInit(&hcrc);
+	HAL_QSPI_MspDeInit(&hqspi);
 
 	// JUMP TO THE NEW APPLICATON
-	gotoFirmware(FW_CM7_START_ADD);
-
+	gotoFirmware(FW_CM7_START_ADDR);
 
 	/* USER CODE END 2 */
 

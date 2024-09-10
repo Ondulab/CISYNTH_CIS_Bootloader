@@ -46,6 +46,7 @@ _Min_Stack_Size = 0x800; /* required amount of stack */
 MEMORY
 {
   FLASH (rx)    			: ORIGIN = 0x08000000, LENGTH = 128K 
+  FLASH_DATA (rw)    		: ORIGIN = 0x08020000, LENGTH = 128K 
   DTCM (rw)   				: ORIGIN = 0x20000000, LENGTH = 128K
   RAM_SHARED (rw) 			: ORIGIN = 0x24000000, LENGTH = 128
   RAM_SHARED_CACHED (rw) 	: ORIGIN = 0x24000000 + LENGTH(RAM_SHARED), LENGTH = 120K
@@ -135,6 +136,15 @@ SECTIONS
     PROVIDE_HIDDEN (__fini_array_end = .);
     . = ALIGN(4);
   } >FLASH
+  
+  /* user sections... */
+  .shared :
+  {
+    . = ALIGN(4);
+    KEEP (*(.shared_var));  
+    KEEP (*(.shared_config));
+    . = ALIGN(4); 
+  } >RAM_SHARED
 
   /* Used by the startup to initialize data */
   _sidata = LOADADDR(.data);
