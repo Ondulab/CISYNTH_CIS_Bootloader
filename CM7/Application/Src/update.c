@@ -85,29 +85,33 @@ bool update_processPackageFile(const TCHAR* packageFilePath)
     uint8_t magic[4];
     ProgressManager progressManager;
 
+    // Initialize progress manager
     progress_init(&progressManager, NUM_STEPS);
 
+    // Open the update package file
     res = f_open(&file, packageFilePath, FA_READ);
     if (res != FR_OK)
     {
-        printf("Failed to open the package file: %s\n", packageFilePath);
+        printf("Error: Failed to open the package file: %s\n", packageFilePath);
         gui_displayUpdateFailed();
         return false;
     }
 
+    // Read the header
     res = f_read(&file, header, sizeof(header), &bytesRead);
     if (res != FR_OK || bytesRead != sizeof(header))
     {
-        printf("Failed to read the package header\n");
+        printf("Error: Failed to read the package header\n");
         f_close(&file);
         gui_displayUpdateFailed();
         return false;
     }
 
+    // Parse the header
     memcpy(magic, header, 4);
     if (memcmp(magic, "BOOT", 4) != 0)
     {
-        printf("Invalid package magic number\n");
+        printf("Error: Invalid package magic number\n");
         f_close(&file);
         gui_displayUpdateFailed();
         return false;
@@ -123,18 +127,60 @@ bool update_processPackageFile(const TCHAR* packageFilePath)
     printf("CM4 firmware size: %lu bytes\n", cm4_size);
     printf("External data size: %lu bytes\n", external_size);
 
+    // Display version
     gui_displayVersion(version);
 
+    // Step 1: Calculate and verify CRC
+    printf("Step 1: Calculate and verify CRC\n");
     if (!update_calculateCRC(&file, &progressManager))
     {
+        printf("Error: Failed to calculate or verify CRC\n");
         f_close(&file);
         return false;
     }
 
+    // Step 2: Backup current CM7 firmware
+    printf("Step 2: Backup current CM7 firmware\n");
+    if (!update_backupFirmware(FW_CM7_START_ADDR, cm7_size, "backup_cm7.bin", &progressManager, STEP_BACKUP_CM7))
+    {
+        printf("Error: Failed to backup current CM7 firmware\n");
+        f_close(&file);
+        return false;
+    }
+
+    // Step 3: Backup current CM4 firmware
+    printf("Step 3: Backup current CM4 firmware\n");
+    if (!update_backupFirmware(FW_CM4_START_ADDR, cm4_size, "backup_cm4.bin", &progressManager, STEP_BACKUP_CM4))
+    {
+        printf("Error: Failed to backup current CM4 firmware\n");
+        f_close(&file);
+        return false;
+    }
+
+    // Step 4: Erase CM7 firmware
+    printf("Step 4: Erase CM7 firmware\n");
+    if (!update_eraseFirmware(FW_CM7_START_ADDR, cm7_size, &progressManager, STEP_ERASE_CM7))
+    {
+        printf("Error: Failed to erase CM7 firmware\n");
+        f_close(&file);
+        return false;
+    }
+
+    // Step 5: Erase CM4 firmware
+    printf("Step 5: Erase CM4 firmware\n");
+    if (!update_eraseFirmware(FW_CM4_START_ADDR, cm4_size, &progressManager, STEP_ERASE_CM4))
+    {
+        printf("Error: Failed to erase CM4 firmware\n");
+        f_close(&file);
+        return false;
+    }
+
+    // Step 6: Flash new CM7 firmware
+    printf("Step 6: Flash new CM7 firmware\n");
     res = f_lseek(&file, HEADER_SIZE);
     if (res != FR_OK)
     {
-        printf("Failed to reposition after the header\n");
+        printf("Error: Failed to reposition after the header\n");
         gui_displayUpdateFailed();
         f_close(&file);
         return false;
@@ -142,14 +188,17 @@ bool update_processPackageFile(const TCHAR* packageFilePath)
 
     if (!update_writeFirmware(FW_CM7_START_ADDR, &file, cm7_size, &progressManager, STEP_FLASH_CM7))
     {
+        printf("Error: Failed to flash new CM7 firmware\n");
         f_close(&file);
         return false;
     }
 
+    // Step 7: Flash new CM4 firmware
+    printf("Step 7: Flash new CM4 firmware\n");
     res = f_lseek(&file, HEADER_SIZE + cm7_size);
     if (res != FR_OK)
     {
-        printf("Failed to reposition to CM4 firmware data\n");
+        printf("Error: Failed to reposition to CM4 firmware data\n");
         gui_displayUpdateFailed();
         f_close(&file);
         return false;
@@ -157,14 +206,17 @@ bool update_processPackageFile(const TCHAR* packageFilePath)
 
     if (!update_writeFirmware(FW_CM4_START_ADDR, &file, cm4_size, &progressManager, STEP_FLASH_CM4))
     {
+        printf("Error: Failed to flash new CM4 firmware\n");
         f_close(&file);
         return false;
     }
 
+    // Step 8: Save external data
+    printf("Step 8: Save external data\n");
     res = f_lseek(&file, HEADER_SIZE + cm7_size + cm4_size);
     if (res != FR_OK)
     {
-        printf("Failed to reposition to external data\n");
+        printf("Error: Failed to reposition to external data\n");
         gui_displayUpdateFailed();
         f_close(&file);
         return false;
@@ -172,12 +224,17 @@ bool update_processPackageFile(const TCHAR* packageFilePath)
 
     if (!update_writeExternalData(&file, external_size, &progressManager, STEP_SAVE_EXTERNAL))
     {
+        printf("Error: Failed to save external data\n");
         f_close(&file);
         return false;
     }
 
+    // Close the package file
     f_close(&file);
+
+    // Display success message
     gui_displayUpdateSuccess();
+
     return true;
 }
 
@@ -271,61 +328,120 @@ static bool update_calculateCRC(FIL* file, ProgressManager* progressManager)
     return true;
 }
 
-/**
- * @brief Backs up firmware from flash to a file.
- * @param flashStartAddr Starting address of the firmware in flash.
- * @param size Size of the firmware to back up.
- * @param backupFilePath Path to the backup file.
- * @param progressManager Pointer to the progress manager.
- * @param step_number The step number for progress tracking.
- * @return True if the backup was successful, false otherwise.
- */
 static bool update_backupFirmware(uint32_t flashStartAddr, uint32_t size, const char* backupFilePath, ProgressManager* progressManager, int step_number)
 {
     FIL backupFile;
     FRESULT res;
     UINT bytesWritten;
-    uint32_t bytesToRead = size;
-    uint8_t readBuffer[BUFFER_SIZE] __attribute__((aligned(4)));
+    uint8_t readBuffer[32] __attribute__((aligned(32))); // Alignement requis
+    uint32_t bytesRemaining = size;
     uint32_t flashAddress = flashStartAddr;
 
-    uint32_t totalBytesToRead = size;
-    uint32_t totalBytesRead = 0;
-
-    // Open the file for writing
-    res = f_open(&backupFile, backupFilePath, FA_WRITE | FA_CREATE_ALWAYS);
-    if (res != FR_OK)
+    // Vérification des limites de la mémoire flash
+    if (flashAddress + size > FLASH_END_ADDR)
     {
-        printf("Failed to open the backup file: %s\n", backupFilePath);
+        printf("Error: Flash address out of range\n");
         return false;
     }
 
-    while (bytesToRead > 0)
+    // Ouvrir le fichier de sauvegarde
+    res = f_open(&backupFile, backupFilePath, FA_WRITE | FA_CREATE_ALWAYS);
+    if (res != FR_OK)
     {
-        uint32_t chunkSize = (bytesToRead > BUFFER_SIZE) ? BUFFER_SIZE : bytesToRead;
+        printf("Error: Cannot open backup file %s\n", backupFilePath);
+        return false;
+    }
 
-        // Read data from flash
+    uint32_t totalBytesRead = 0;
+
+    while (bytesRemaining > 0)
+    {
+        uint32_t chunkSize = (bytesRemaining > sizeof(readBuffer)) ? sizeof(readBuffer) : bytesRemaining;
+
+        // Lecture depuis la mémoire flash
         memcpy(readBuffer, (uint8_t*)flashAddress, chunkSize);
 
-        // Write data to the backup file
+        // Écriture dans le fichier
         res = f_write(&backupFile, readBuffer, chunkSize, &bytesWritten);
         if (res != FR_OK || bytesWritten != chunkSize)
         {
-            printf("Failed to write to the backup file: %s\n", backupFilePath);
+            printf("Error: Write failed in backup file %s\n", backupFilePath);
             f_close(&backupFile);
             return false;
         }
 
         flashAddress += chunkSize;
-        bytesToRead -= chunkSize;
+        bytesRemaining -= chunkSize;
         totalBytesRead += chunkSize;
 
-        // Update step progress
-        progress_update(progressManager, step_number, totalBytesRead, totalBytesToRead);
+        // Mise à jour de la progression
+        progress_update(progressManager, step_number, totalBytesRead, size);
     }
 
-    // Close the backup file
     f_close(&backupFile);
+    return true;
+}
+
+static bool update_writeFirmware(uint32_t flashStartAddr, FIL* file, uint32_t size, ProgressManager* progressManager, int step_number)
+{
+    uint8_t readBuffer[32] __attribute__((aligned(32))); // Tampon aligné
+    uint8_t tempBuffer[32] __attribute__((aligned(32))); // Tampon temporaire aligné
+    uint32_t flashAddress = flashStartAddr;
+    uint32_t bytesRemaining = size;
+    UINT bytesRead;
+    FRESULT res;
+    STM32Flash_StatusTypeDef status;
+
+    uint32_t totalBytesWritten = 0;
+
+    printf("Flashing firmware to address 0x%08lx...\n", flashAddress);
+
+    while (bytesRemaining > 0)
+    {
+        uint32_t chunkSize = (bytesRemaining > sizeof(readBuffer)) ? sizeof(readBuffer) : bytesRemaining;
+
+        // Lire depuis le fichier
+        res = f_read(file, readBuffer, chunkSize, &bytesRead);
+        if (res != FR_OK || bytesRead != chunkSize)
+        {
+            printf("Error: Failed to read firmware data\n");
+            gui_displayUpdateFailed();
+            return false;
+        }
+
+        // Aligner les données si nécessaire
+        uint8_t* dataPtr = readBuffer;
+        if ((uintptr_t)dataPtr % 32 != 0 || bytesRead < 32)
+        {
+            memset(tempBuffer, 0xFF, 32); // Remplir avec des valeurs par défaut
+            memcpy(tempBuffer, dataPtr, bytesRead);
+            dataPtr = tempBuffer;
+        }
+
+        // Vérifier l'alignement de l'adresse flash
+        if (flashAddress % 32 != 0)
+        {
+            printf("Error: Flash address misaligned at 0x%08lx\n", flashAddress);
+            gui_displayUpdateFailed();
+            return false;
+        }
+
+        // Écrire dans la mémoire flash
+        status = STM32Flash_write32B(dataPtr, flashAddress);
+        if (status != STM32FLASH_OK)
+        {
+            printf("Error: Failed to write to flash at 0x%08lx\n", flashAddress);
+            gui_displayUpdateFailed();
+            return false;
+        }
+
+        flashAddress += 32;
+        bytesRemaining -= bytesRead;
+        totalBytesWritten += bytesRead;
+
+        // Mise à jour de la progression
+        progress_update(progressManager, step_number, totalBytesWritten, size);
+    }
 
     return true;
 }
@@ -363,88 +479,6 @@ static bool update_eraseFirmware(uint32_t flashStartAddr, uint32_t size, Progres
 
         // Update step progress
         progress_update(progressManager, step_number, sectorsErased, NbSectors);
-    }
-
-    return true;
-}
-
-/**
- * @brief Writes the firmware to internal flash.
- * @param flashStartAddr Starting address in flash where the firmware will be written.
- * @param file Pointer to the open package file.
- * @param size Size of the firmware.
- * @param progressManager Pointer to the progress manager.
- * @param step_number The step number for progress tracking.
- * @return True if the firmware was written successfully, false otherwise.
- */
-static bool update_writeFirmware(uint32_t flashStartAddr, FIL* file, uint32_t size, ProgressManager* progressManager, int step_number)
-{
-    UINT bytesRead;
-    FRESULT res;
-    uint32_t flashAddress = flashStartAddr;
-    STM32Flash_StatusTypeDef status;
-    uint8_t readBuffer[BUFFER_SIZE] __attribute__((aligned(4)));
-    // Use the global tempBuffer
-    extern uint8_t tempBuffer[32];
-
-    uint32_t totalBytesToWrite = size;
-    uint32_t totalBytesWritten = 0;
-
-    printf("Writing firmware to flash starting at address 0x%08lx...\n", flashAddress);
-
-    uint32_t bytesToWrite = size;
-
-    while (bytesToWrite > 0)
-    {
-        uint32_t chunkSize = (bytesToWrite > BUFFER_SIZE) ? BUFFER_SIZE : bytesToWrite;
-        res = f_read(file, readBuffer, chunkSize, &bytesRead);
-        if (res != FR_OK || bytesRead != chunkSize)
-        {
-            printf("Failed to read firmware data. res=%d, bytesRead=%u, expected=%u\n", res, bytesRead, chunkSize);
-            gui_displayUpdateFailed();
-            return false;
-        }
-
-        // Write data to flash using STM32Flash_write32B
-        uint32_t writeOffset = 0;
-        while (writeOffset < bytesRead)
-        {
-            uint32_t writeSize = ((bytesRead - writeOffset) >= 32) ? 32 : (bytesRead - writeOffset);
-            uint8_t* dataPtr = readBuffer + writeOffset;
-
-            // Ensure that the data is aligned to 32 bytes
-            if (((uint32_t)dataPtr % 32 != 0) || (writeSize < 32))
-            {
-                memset(tempBuffer, 0xFF, 32);
-                memcpy(tempBuffer, dataPtr, writeSize);
-                dataPtr = tempBuffer;
-            }
-
-            // Ensure that the flash address is aligned
-            if (flashAddress % 32 != 0)
-            {
-                printf("Unaligned flash address: 0x%08lx\n", flashAddress);
-                gui_displayUpdateFailed();
-                return false;
-            }
-
-            status = STM32Flash_write32B(dataPtr, flashAddress);
-            if (status != STM32FLASH_OK)
-            {
-                printf("Failed to write to flash at address 0x%08lx\n", flashAddress);
-                gui_displayUpdateFailed();
-                return false;
-            }
-
-            flashAddress += 32;
-            writeOffset += writeSize;
-            totalBytesWritten += writeSize;
-
-            // Update step progress
-            progress_update(progressManager, step_number, totalBytesWritten, totalBytesToWrite);
-        }
-
-        bytesToWrite -= bytesRead;
     }
 
     return true;

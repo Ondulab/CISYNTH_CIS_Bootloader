@@ -28,8 +28,6 @@ extern "C" {
 #include "ff.h"       // For FatFS types
 
 /* Exported constants --------------------------------------------------------*/
-#define BUFFER_SIZE 512
-
 #define FW_CM7_START_ADDR 0x08040000
 #define FW_CM4_START_ADDR 0x08100000
 
