@@ -1,6 +1,6 @@
 /**
  ******************************************************************************
- * @file           : update.h
+ * @file           : update_gui.h
  * @brief          : Header for update.c file.
  *                   Contains prototypes and definitions for update functionality.
  ******************************************************************************

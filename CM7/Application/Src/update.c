@@ -1,10 +1,11 @@
 /**
  ******************************************************************************
  * @file           : update.c
+ * @brief          : Implementation of firmware update functionality.
  ******************************************************************************
  * @attention
  *
- * Copyright (C) 2018-present Reso-nance Numerique.
+ * Copyright (C) 2018-present Reso-nance.
  * All rights reserved.
  *
  * This software is licensed under terms that can be found in the LICENSE file
@@ -14,14 +15,15 @@
  */
 
 /* Includes ------------------------------------------------------------------*/
+#include "progress.h"
 #include "main.h"
 #include "config.h"
 #include "basetypes.h"
 #include "globals.h"
 
-#include "stdlib.h"
-#include "stdio.h"
-#include "stdbool.h"
+#include <stdlib.h>
+#include <stdio.h>
+#include <stdbool.h>
 
 #include "fatfs.h"
 #include "stm32_flash.h"
@@ -29,61 +31,62 @@
 #include "crc.h"
 
 #include "update_gui.h"
-
 #include "update.h"
-
-/* Private includes ----------------------------------------------------------*/
-
-/* Private typedef -----------------------------------------------------------*/
 
 /* Private define ------------------------------------------------------------*/
 #define BUFFER_SIZE      512
+#define HEADER_SIZE      24
+#define VERSION_STR_SIZE 9
 
-/* Private macro -------------------------------------------------------------*/
+/* Step numbers for progress tracking */
+#define NUM_STEPS             8
+#define STEP_CRC_CALCULATION  1
+#define STEP_BACKUP_CM7       2
+#define STEP_BACKUP_CM4       3
+#define STEP_ERASE_CM7        4
+#define STEP_ERASE_CM4        5
+#define STEP_FLASH_CM7        6
+#define STEP_FLASH_CM4        7
+#define STEP_SAVE_EXTERNAL    8
 
 /* Private variables ---------------------------------------------------------*/
 uint8_t tempBuffer[32] __attribute__((aligned(32)));
 
-/* Private function prototypes -----------------------------------------------*/
+/* Function prototypes -------------------------------------------------------*/
 static uint32_t update_read_uint32_le(const uint8_t *buffer);
-static bool update_calculateCRC(FIL* file);
-static bool update_backupFirmware(uint32_t flashStartAddr, uint32_t size, const char* backupFilePath);
-static bool update_format(uint32_t cm7_size, uint32_t cm4_size);
-static bool update_write(FIL* file, uint32_t cm7_size, uint32_t cm4_size, uint32_t external_size, uint32_t totalBytesToWrite);
-static bool update_writeFirmware(FIL* file, uint32_t cm7_size, uint32_t cm4_size, uint32_t totalBytesToWrite, uint32_t* totalBytesWritten);
-static bool update_writeExternalData(FIL* file, uint32_t external_size, uint32_t totalBytesToWrite, uint32_t* totalBytesWritten);
-
-/* Private user code ---------------------------------------------------------*/
+static bool update_calculateCRC(FIL* file, ProgressManager* progressManager);
+static bool update_backupFirmware(uint32_t flashStartAddr, uint32_t size, const char* backupFilePath, ProgressManager* progressManager, int step_number);
+static bool update_eraseFirmware(uint32_t flashStartAddr, uint32_t size, ProgressManager* progressManager, int step_number);
+static bool update_writeFirmware(uint32_t flashStartAddr, FIL* file, uint32_t size, ProgressManager* progressManager, int step_number);
+static bool update_writeExternalData(FIL* file, uint32_t external_size, ProgressManager* progressManager, int step_number);
 
 /**
  * @brief Reads a little-endian uint32 from a byte buffer.
- * @param buffer Pointer to the byte buffer.
- * @return 32-bit unsigned integer read from the buffer.
  */
 static uint32_t update_read_uint32_le(const uint8_t *buffer)
 {
     return ((uint32_t)buffer[0]) |
-            ((uint32_t)buffer[1] << 8) |
-            ((uint32_t)buffer[2] << 16) |
-            ((uint32_t)buffer[3] << 24);
+           ((uint32_t)buffer[1] << 8) |
+           ((uint32_t)buffer[2] << 16) |
+           ((uint32_t)buffer[3] << 24);
 }
+
 /**
  * @brief Processes a firmware update package file.
- * @param packageFilePath Path to the update package file.
- * @return True if the package was processed successfully, false otherwise.
  */
 bool update_processPackageFile(const TCHAR* packageFilePath)
 {
     FIL file;
     UINT bytesRead;
     FRESULT res;
-    uint32_t totalBytesToWrite = 0;
-    uint8_t header[24]; // 4 (magic) + 4 (cm7_size) + 4 (cm4_size) + 4 (external_size) + 8 (version)
+    uint8_t header[HEADER_SIZE];
     uint32_t cm7_size, cm4_size, external_size;
-    char version[9] = {0}; // Version string (8 bytes + null terminator)
+    char version[VERSION_STR_SIZE] = {0};
     uint8_t magic[4];
+    ProgressManager progressManager;
 
-    // Open the package file
+    progress_init(&progressManager, NUM_STEPS);
+
     res = f_open(&file, packageFilePath, FA_READ);
     if (res != FR_OK)
     {
@@ -92,7 +95,6 @@ bool update_processPackageFile(const TCHAR* packageFilePath)
         return false;
     }
 
-    // Read the 24-byte header
     res = f_read(&file, header, sizeof(header), &bytesRead);
     if (res != FR_OK || bytesRead != sizeof(header))
     {
@@ -102,7 +104,6 @@ bool update_processPackageFile(const TCHAR* packageFilePath)
         return false;
     }
 
-    // Parse the header
     memcpy(magic, header, 4);
     if (memcmp(magic, "BOOT", 4) != 0)
     {
@@ -112,82 +113,81 @@ bool update_processPackageFile(const TCHAR* packageFilePath)
         return false;
     }
 
-    // Read values considering endianness (little-endian)
     cm7_size = update_read_uint32_le(header + 4);
     cm4_size = update_read_uint32_le(header + 8);
     external_size = update_read_uint32_le(header + 12);
-    memcpy(version, header + 16, 8); // Version is 8 bytes
+    memcpy(version, header + 16, 8);
 
     printf("Package version: %s\n", version);
     printf("CM7 firmware size: %lu bytes\n", cm7_size);
     printf("CM4 firmware size: %lu bytes\n", cm4_size);
     printf("External data size: %lu bytes\n", external_size);
 
-    // Calculate total data size for progress bar
-    totalBytesToWrite = cm7_size + cm4_size + external_size;
-
-    // Display version on the screen
     gui_displayVersion(version);
 
-    // Backup firmwares before erasing
-    printf("Backing up CM7 firmware...\n");
-    if (!update_backupFirmware(FW_CM7_START_ADDR, cm7_size, "0:/backup_cm7.bin"))
+    if (!update_calculateCRC(&file, &progressManager))
     {
-        printf("Failed to back up CM7 firmware\n");
         f_close(&file);
+        return false;
+    }
+
+    res = f_lseek(&file, HEADER_SIZE);
+    if (res != FR_OK)
+    {
+        printf("Failed to reposition after the header\n");
         gui_displayUpdateFailed();
+        f_close(&file);
         return false;
     }
 
-    printf("Backing up CM4 firmware...\n");
-    if (!update_backupFirmware(FW_CM4_START_ADDR, cm4_size, "0:/backup_cm4.bin"))
+    if (!update_writeFirmware(FW_CM7_START_ADDR, &file, cm7_size, &progressManager, STEP_FLASH_CM7))
     {
-        printf("Failed to back up CM4 firmware\n");
         f_close(&file);
+        return false;
+    }
+
+    res = f_lseek(&file, HEADER_SIZE + cm7_size);
+    if (res != FR_OK)
+    {
+        printf("Failed to reposition to CM4 firmware data\n");
         gui_displayUpdateFailed();
+        f_close(&file);
         return false;
     }
 
-    // Calculate and verify CRC
-    if (!update_calculateCRC(&file))
+    if (!update_writeFirmware(FW_CM4_START_ADDR, &file, cm4_size, &progressManager, STEP_FLASH_CM4))
     {
         f_close(&file);
         return false;
     }
 
-    // Erase necessary flash sectors
-    if (!update_format(cm7_size, cm4_size))
+    res = f_lseek(&file, HEADER_SIZE + cm7_size + cm4_size);
+    if (res != FR_OK)
+    {
+        printf("Failed to reposition to external data\n");
+        gui_displayUpdateFailed();
+        f_close(&file);
+        return false;
+    }
+
+    if (!update_writeExternalData(&file, external_size, &progressManager, STEP_SAVE_EXTERNAL))
     {
         f_close(&file);
         return false;
     }
 
-    // Write firmware and external data
-    if (!update_write(&file, cm7_size, cm4_size, external_size, totalBytesToWrite))
-    {
-        f_close(&file);
-        return false;
-    }
-
-    // Close the package file
     f_close(&file);
-
-    // Update progress bar to 100%
-    gui_displayUpdateProcess(100);
-
-    // Display success message
     gui_displayUpdateSuccess();
-
-    // Return success
     return true;
 }
 
 /**
  * @brief Calculates and verifies the CRC of the update package.
  * @param file Pointer to the open file.
+ * @param progressManager Pointer to the progress manager.
  * @return True if the CRC matches, false otherwise.
  */
-static bool update_calculateCRC(FIL* file)
+static bool update_calculateCRC(FIL* file, ProgressManager* progressManager)
 {
     FSIZE_t file_size = f_size(file);
     FRESULT res;
@@ -199,7 +199,6 @@ static bool update_calculateCRC(FIL* file)
     uint32_t crc_length = file_size - 4; // Exclude the footer CRC
     uint8_t readBuffer[BUFFER_SIZE] __attribute__((aligned(4))); // Buffer aligned to 4 bytes
     uint8_t crc_buffer[4];
-    int32_t progressBar = 0;
 
     // Read the CRC from the footer
     res = f_lseek(file, crc_position);
@@ -234,15 +233,12 @@ static bool update_calculateCRC(FIL* file)
     // Initialize the CRC calculation
     __HAL_CRC_DR_RESET(&hcrc);
 
-    // Update the progress bar to 0%
-    gui_displayUpdateProcess(0);
-
     while (totalDataRead < crc_length)
     {
         uint32_t bytesToRead = (crc_length - totalDataRead > BUFFER_SIZE) ? BUFFER_SIZE : (crc_length - totalDataRead);
         res = f_read(file, readBuffer, bytesToRead, &bytesRead);
-        if (res != FR_OK || bytesRead == 0) {
-            // Handle the error
+        if (res != FR_OK || bytesRead == 0)
+        {
             printf("Error reading the file for CRC calculation\n");
             gui_displayUpdateFailed();
             return false;
@@ -253,8 +249,8 @@ static bool update_calculateCRC(FIL* file)
 
         totalDataRead += bytesRead;
 
-        progressBar = (totalDataRead * 4) / crc_length + 1;
-        gui_displayUpdateProcess(progressBar);
+        // Update step progress
+        progress_update(progressManager, STEP_CRC_CALCULATION, totalDataRead, crc_length);
     }
 
     // Perform the final XOR with 0xFFFFFFFF
@@ -280,9 +276,11 @@ static bool update_calculateCRC(FIL* file)
  * @param flashStartAddr Starting address of the firmware in flash.
  * @param size Size of the firmware to back up.
  * @param backupFilePath Path to the backup file.
+ * @param progressManager Pointer to the progress manager.
+ * @param step_number The step number for progress tracking.
  * @return True if the backup was successful, false otherwise.
  */
-static bool update_backupFirmware(uint32_t flashStartAddr, uint32_t size, const char* backupFilePath)
+static bool update_backupFirmware(uint32_t flashStartAddr, uint32_t size, const char* backupFilePath, ProgressManager* progressManager, int step_number)
 {
     FIL backupFile;
     FRESULT res;
@@ -290,6 +288,9 @@ static bool update_backupFirmware(uint32_t flashStartAddr, uint32_t size, const 
     uint32_t bytesToRead = size;
     uint8_t readBuffer[BUFFER_SIZE] __attribute__((aligned(4)));
     uint32_t flashAddress = flashStartAddr;
+
+    uint32_t totalBytesToRead = size;
+    uint32_t totalBytesRead = 0;
 
     // Open the file for writing
     res = f_open(&backupFile, backupFilePath, FA_WRITE | FA_CREATE_ALWAYS);
@@ -317,6 +318,10 @@ static bool update_backupFirmware(uint32_t flashStartAddr, uint32_t size, const 
 
         flashAddress += chunkSize;
         bytesToRead -= chunkSize;
+        totalBytesRead += chunkSize;
+
+        // Update step progress
+        progress_update(progressManager, step_number, totalBytesRead, totalBytesToRead);
     }
 
     // Close the backup file
@@ -326,124 +331,68 @@ static bool update_backupFirmware(uint32_t flashStartAddr, uint32_t size, const 
 }
 
 /**
- * @brief Erases necessary flash sectors for CM7 and CM4 firmware.
- * @param cm7_size Size of the CM7 firmware.
- * @param cm4_size Size of the CM4 firmware.
+ * @brief Erases necessary flash sectors for firmware.
+ * @param flashStartAddr Starting address of the firmware in flash.
+ * @param size Size of the firmware.
+ * @param progressManager Pointer to the progress manager.
+ * @param step_number The step number for progress tracking.
  * @return True if the sectors were erased successfully, false otherwise.
  */
-static bool update_format(uint32_t cm7_size, uint32_t cm4_size)
+static bool update_eraseFirmware(uint32_t flashStartAddr, uint32_t size, ProgressManager* progressManager, int step_number)
 {
-    uint32_t cm7_flashBank = FLASH_BANK_1;
-    uint32_t cm7_flashSector = stm32_flashGetSector(FW_CM7_START_ADDR);
-    uint32_t cm7_NbSectors = (cm7_size + FLASH_SECTOR_SIZE - 1) / FLASH_SECTOR_SIZE; // Calculate the number of required sectors
-    uint32_t cm4_flashBank = FLASH_BANK_2;
-    uint32_t cm4_flashSector = stm32_flashGetSector(FW_CM4_START_ADDR);
-    uint32_t cm4_NbSectors = (cm4_size + FLASH_SECTOR_SIZE - 1) / FLASH_SECTOR_SIZE; // Calculate the number of required sectors
-    int32_t progressBar = 0;
     STM32Flash_StatusTypeDef status;
 
-    // Erase CM7 sectors
-    printf("Erasing CM7 flash sectors...\n");
-    for (uint32_t sector = cm7_flashSector; sector < cm7_flashSector + cm7_NbSectors; sector++)
+    // Determine flash bank and sector
+    uint32_t flashBank = (flashStartAddr < FLASH_BANK_SIZE) ? FLASH_BANK_1 : FLASH_BANK_2;
+    uint32_t flashSector = stm32_flashGetSector(flashStartAddr);
+    uint32_t NbSectors = (size + FLASH_SECTOR_SIZE - 1) / FLASH_SECTOR_SIZE;
+    uint32_t sectorsErased = 0;
+
+    printf("Erasing flash sectors starting from sector %lu...\n", flashSector);
+    for (uint32_t sector = flashSector; sector < flashSector + NbSectors; sector++)
     {
-        status = STM32Flash_erase_sector(cm7_flashBank, sector);
+        status = STM32Flash_erase_sector(flashBank, sector);
         if (status != STM32FLASH_OK)
         {
-            printf("Failed to erase CM7 sector %lu\n", sector);
+            printf("Failed to erase sector %lu\n", sector);
             gui_displayUpdateFailed();
             return false;
         }
 
-        progressBar = ((sector - cm7_flashSector + 1) * 10) / cm7_NbSectors;
-        progressBar += 5;
+        sectorsErased++;
 
-        // Update the progress bar
-        gui_displayUpdateProcess(progressBar);
-    }
-
-    // Erase CM4 sectors
-    printf("Erasing CM4 flash sectors...\n");
-    for (uint32_t sector = cm4_flashSector; sector < cm4_flashSector + cm4_NbSectors; sector++)
-    {
-        status = STM32Flash_erase_sector(cm4_flashBank, sector);
-        if (status != STM32FLASH_OK)
-        {
-            printf("Failed to erase CM4 sector %lu\n", sector);
-            gui_displayUpdateFailed();
-            return false;
-        }
-
-        progressBar = ((sector - cm4_flashSector + 1) * 5) / cm4_NbSectors;
-        progressBar += 15;
-
-        // Update the progress bar
-        gui_displayUpdateProcess(progressBar);
+        // Update step progress
+        progress_update(progressManager, step_number, sectorsErased, NbSectors);
     }
 
     return true;
 }
 
 /**
- * @brief Writes the firmware and external data from the package file.
+ * @brief Writes the firmware to internal flash.
+ * @param flashStartAddr Starting address in flash where the firmware will be written.
  * @param file Pointer to the open package file.
- * @param cm7_size Size of the CM7 firmware.
- * @param cm4_size Size of the CM4 firmware.
- * @param external_size Size of the external data.
- * @param totalBytesToWrite Total bytes to write for progress calculation.
- * @return True if the write operations were successful, false otherwise.
- */
-static bool update_write(FIL* file, uint32_t cm7_size, uint32_t cm4_size, uint32_t external_size, uint32_t totalBytesToWrite)
-{
-    uint32_t totalBytesWritten = 0;
-    FRESULT res;
-
-    // Reposition the file pointer after the header to start reading data
-    res = f_lseek(file, 24); // size of header is 24 bytes
-    if (res != FR_OK)
-    {
-        printf("Failed to reposition after the header\n");
-        gui_displayUpdateFailed();
-        return false;
-    }
-
-    // Write the firmware
-    if (!update_writeFirmware(file, cm7_size, cm4_size, totalBytesToWrite, &totalBytesWritten))
-    {
-        return false;
-    }
-
-    // Write the external data
-    if (!update_writeExternalData(file, external_size, totalBytesToWrite, &totalBytesWritten))
-    {
-        return false;
-    }
-
-    return true;
-}
-
-/**
- * @brief Writes the CM7 and CM4 firmware to internal flash.
- * @param file Pointer to the open package file.
- * @param cm7_size Size of the CM7 firmware.
- * @param cm4_size Size of the CM4 firmware.
- * @param totalBytesToWrite Total bytes to write for progress calculation.
- * @param totalBytesWritten Pointer to total bytes written so far.
+ * @param size Size of the firmware.
+ * @param progressManager Pointer to the progress manager.
+ * @param step_number The step number for progress tracking.
  * @return True if the firmware was written successfully, false otherwise.
  */
-static bool update_writeFirmware(FIL* file, uint32_t cm7_size, uint32_t cm4_size, uint32_t totalBytesToWrite, uint32_t* totalBytesWritten)
+static bool update_writeFirmware(uint32_t flashStartAddr, FIL* file, uint32_t size, ProgressManager* progressManager, int step_number)
 {
     UINT bytesRead;
     FRESULT res;
-    uint32_t flashAddress;
+    uint32_t flashAddress = flashStartAddr;
     STM32Flash_StatusTypeDef status;
-    uint8_t readBuffer[BUFFER_SIZE] __attribute__((aligned(4))); // Buffer aligned to 4 bytes
-    uint8_t tempBuffer[32] __attribute__((aligned(32)));
-    int32_t progressBar = 0;
+    uint8_t readBuffer[BUFFER_SIZE] __attribute__((aligned(4)));
+    // Use the global tempBuffer
+    extern uint8_t tempBuffer[32];
 
-    // Write the CM7 firmware
-    printf("Writing CM7 firmware...\n");
-    flashAddress = FW_CM7_START_ADDR;
-    uint32_t bytesToWrite = cm7_size;
+    uint32_t totalBytesToWrite = size;
+    uint32_t totalBytesWritten = 0;
+
+    printf("Writing firmware to flash starting at address 0x%08lx...\n", flashAddress);
+
+    uint32_t bytesToWrite = size;
 
     while (bytesToWrite > 0)
     {
@@ -451,7 +400,7 @@ static bool update_writeFirmware(FIL* file, uint32_t cm7_size, uint32_t cm4_size
         res = f_read(file, readBuffer, chunkSize, &bytesRead);
         if (res != FR_OK || bytesRead != chunkSize)
         {
-            printf("Failed to read CM7 firmware data\n");
+            printf("Failed to read firmware data. res=%d, bytesRead=%u, expected=%u\n", res, bytesRead, chunkSize);
             gui_displayUpdateFailed();
             return false;
         }
@@ -489,77 +438,13 @@ static bool update_writeFirmware(FIL* file, uint32_t cm7_size, uint32_t cm4_size
 
             flashAddress += 32;
             writeOffset += writeSize;
-            *totalBytesWritten += writeSize;
+            totalBytesWritten += writeSize;
+
+            // Update step progress
+            progress_update(progressManager, step_number, totalBytesWritten, totalBytesToWrite);
         }
 
         bytesToWrite -= bytesRead;
-
-        progressBar = ((*totalBytesWritten * 80) / totalBytesToWrite);
-        progressBar += 20;
-
-        // Update the progress bar
-        gui_displayUpdateProcess(progressBar);
-    }
-
-    // Write the CM4 firmware
-    printf("Writing CM4 firmware...\n");
-    flashAddress = FW_CM4_START_ADDR;
-    bytesToWrite = cm4_size;
-
-    while (bytesToWrite > 0)
-    {
-        uint32_t chunkSize = (bytesToWrite > BUFFER_SIZE) ? BUFFER_SIZE : bytesToWrite;
-        res = f_read(file, readBuffer, chunkSize, &bytesRead);
-        if (res != FR_OK || bytesRead != chunkSize)
-        {
-            printf("Failed to read CM4 firmware data\n");
-            gui_displayUpdateFailed();
-            return false;
-        }
-
-        // Write data to flash using STM32Flash_write32B
-        uint32_t writeOffset = 0;
-        while (writeOffset < bytesRead)
-        {
-            uint32_t writeSize = ((bytesRead - writeOffset) >= 32) ? 32 : (bytesRead - writeOffset);
-            uint8_t* dataPtr = readBuffer + writeOffset;
-
-            // Ensure that the data is aligned to 32 bytes
-            if (((uint32_t)dataPtr % 32 != 0) || (writeSize < 32))
-            {
-                memset(tempBuffer, 0xFF, 32);
-                memcpy(tempBuffer, dataPtr, writeSize);
-                dataPtr = tempBuffer;
-            }
-
-            // Ensure that the flash address is aligned
-            if (flashAddress % 32 != 0)
-            {
-                printf("Unaligned flash address: 0x%08lx\n", flashAddress);
-                gui_displayUpdateFailed();
-                return false;
-            }
-
-            status = STM32Flash_write32B(dataPtr, flashAddress);
-            if (status != STM32FLASH_OK)
-            {
-                printf("Failed to write to flash at address 0x%08lx\n", flashAddress);
-                gui_displayUpdateFailed();
-                return false;
-            }
-
-            flashAddress += 32;
-            writeOffset += writeSize;
-            *totalBytesWritten += writeSize;
-        }
-
-        bytesToWrite -= bytesRead;
-
-        progressBar = ((*totalBytesWritten * 80) / totalBytesToWrite);
-        progressBar += 20;
-
-        // Update the progress bar
-        gui_displayUpdateProcess(progressBar);
     }
 
     return true;
@@ -569,16 +454,18 @@ static bool update_writeFirmware(FIL* file, uint32_t cm7_size, uint32_t cm4_size
  * @brief Writes the external data to the file system.
  * @param file Pointer to the open package file.
  * @param external_size Size of the external data.
- * @param totalBytesToWrite Total bytes to write for progress calculation.
- * @param totalBytesWritten Pointer to total bytes written so far.
+ * @param progressManager Pointer to the progress manager.
+ * @param step_number The step number for progress tracking.
  * @return True if the external data was written successfully, false otherwise.
  */
-static bool update_writeExternalData(FIL* file, uint32_t external_size, uint32_t totalBytesToWrite, uint32_t* totalBytesWritten)
+static bool update_writeExternalData(FIL* file, uint32_t external_size, ProgressManager* progressManager, int step_number)
 {
     UINT bytesRead;
     FRESULT res;
-    uint8_t readBuffer[BUFFER_SIZE] __attribute__((aligned(4))); // Buffer aligned to 4 bytes
-    int32_t progressBar = 0;
+    uint8_t readBuffer[BUFFER_SIZE] __attribute__((aligned(4)));
+
+    uint32_t totalBytesToWrite = external_size;
+    uint32_t totalBytesWritten = 0;
 
     // Write external data to the file system
     printf("Writing external data to the file system...\n");
@@ -619,13 +506,10 @@ static bool update_writeExternalData(FIL* file, uint32_t external_size, uint32_t
         }
 
         bytesToWrite -= bytesRead;
-        *totalBytesWritten += bytesRead;
+        totalBytesWritten += bytesRead;
 
-        progressBar = ((*totalBytesWritten * 80) / totalBytesToWrite);
-        progressBar += 20;
-
-        // Update the progress bar
-        gui_displayUpdateProcess(progressBar);
+        // Update step progress
+        progress_update(progressManager, step_number, totalBytesWritten, totalBytesToWrite);
     }
 
     // Close the external file

@@ -1,6 +1,6 @@
 /**
  ******************************************************************************
- * @file           : update.c
+ * @file           : update_gui.c
  ******************************************************************************
  * @attention
  *
@@ -17,6 +17,10 @@
 #include "main.h"
 #include "config.h"
 #include "basetypes.h"
+
+#include "stdlib.h"
+#include "stdio.h"
+#include "stdbool.h"
 
 #include "ssd1362.h"
 #include "pictures.h"
@@ -51,9 +55,11 @@ void gui_displayVersion(const char* version)
 
     ssd1362_drawString(0, DISPLAY_HEAD_Y1POS + 1, (int8_t *)"         FIRMWARE UPDATE        ", 0xF, 8);
 
-    snprintf(versionString, sizeof(versionString), (char *)"        Updating -> %s      ", version);
+    snprintf(versionString, sizeof(versionString),  (char *)"        Updating -> %s      ", version);
 
     ssd1362_drawString(0, 15, (int8_t *)versionString, 0xF, 8);
+
+    ssd1362_drawString(0, 45, 				       (int8_t *)"        DO NOT POWER OFF        ", 0xF, 8);
 
     // Display the frame buffer
     ssd1362_writeFullBuffer();
@@ -70,14 +76,6 @@ void gui_displayUpdateProcess(int32_t progressBar)
         progressBar = 100;
     if (progressBar < 0)
         progressBar = 0;
-
-    if (progressBar == 0)
-    {
-        ssd1362_drawString(0, 45, (int8_t *)"        DO NOT POWER OFF        ", 0xF, 8);
-
-        // Display the frame buffer
-        ssd1362_writeFullBuffer();
-    }
 
     ssd1362_progressBar(26, 27, progressBar, 0xF);
 }
