@@ -328,23 +328,36 @@ static bool update_calculateCRC(FIL* file, ProgressManager* progressManager)
     return true;
 }
 
+/**
+ * @brief Backs up firmware from flash memory to a specified file.
+ *
+ * This function reads firmware data from flash memory and writes it
+ * to a backup file. Progress updates are reported during the operation.
+ *
+ * @param flashStartAddr Starting address in flash memory.
+ * @param size Size of the firmware to backup in bytes.
+ * @param backupFilePath Path to the backup file to create.
+ * @param progressManager Pointer to the progress manager for updates.
+ * @param step_number Step number for the progress manager.
+ * @return true if the backup is successful, false otherwise.
+ */
 static bool update_backupFirmware(uint32_t flashStartAddr, uint32_t size, const char* backupFilePath, ProgressManager* progressManager, int step_number)
 {
     FIL backupFile;
     FRESULT res;
     UINT bytesWritten;
-    uint8_t readBuffer[32] __attribute__((aligned(32))); // Alignement requis
+    uint8_t readBuffer[32] __attribute__((aligned(32))); // Required alignment
     uint32_t bytesRemaining = size;
     uint32_t flashAddress = flashStartAddr;
 
-    // Vérification des limites de la mémoire flash
+    // Check flash memory boundaries
     if (flashAddress + size > FLASH_END_ADDR)
     {
         printf("Error: Flash address out of range\n");
         return false;
     }
 
-    // Ouvrir le fichier de sauvegarde
+    // Open the backup file
     res = f_open(&backupFile, backupFilePath, FA_WRITE | FA_CREATE_ALWAYS);
     if (res != FR_OK)
     {
@@ -358,10 +371,10 @@ static bool update_backupFirmware(uint32_t flashStartAddr, uint32_t size, const 
     {
         uint32_t chunkSize = (bytesRemaining > sizeof(readBuffer)) ? sizeof(readBuffer) : bytesRemaining;
 
-        // Lecture depuis la mémoire flash
+        // Read from flash memory
         memcpy(readBuffer, (uint8_t*)flashAddress, chunkSize);
 
-        // Écriture dans le fichier
+        // Write to the file
         res = f_write(&backupFile, readBuffer, chunkSize, &bytesWritten);
         if (res != FR_OK || bytesWritten != chunkSize)
         {
@@ -374,7 +387,7 @@ static bool update_backupFirmware(uint32_t flashStartAddr, uint32_t size, const 
         bytesRemaining -= chunkSize;
         totalBytesRead += chunkSize;
 
-        // Mise à jour de la progression
+        // Update progress
         progress_update(progressManager, step_number, totalBytesRead, size);
     }
 
@@ -382,25 +395,45 @@ static bool update_backupFirmware(uint32_t flashStartAddr, uint32_t size, const 
     return true;
 }
 
+/**
+ * @brief Writes firmware to flash memory from a specified file.
+ *
+ * This function reads firmware data from a file and writes it to flash memory
+ * in aligned 32-byte blocks. Progress updates are reported during the operation.
+ *
+ * @param flashStartAddr Starting address in flash memory.
+ * @param file Pointer to the file containing the firmware.
+ * @param size Size of the firmware to write in bytes.
+ * @param progressManager Pointer to the progress manager for updates.
+ * @param step_number Step number for the progress manager.
+ * @return true if the write operation is successful, false otherwise.
+ */
 static bool update_writeFirmware(uint32_t flashStartAddr, FIL* file, uint32_t size, ProgressManager* progressManager, int step_number)
 {
-    uint8_t readBuffer[32] __attribute__((aligned(32))); // Tampon aligné
-    uint8_t tempBuffer[32] __attribute__((aligned(32))); // Tampon temporaire aligné
+    uint8_t readBuffer[512] __attribute__((aligned(32)));
+    uint8_t writeBlock[32] __attribute__((aligned(32)));
     uint32_t flashAddress = flashStartAddr;
     uint32_t bytesRemaining = size;
+    uint32_t totalBytesWritten = 0;
     UINT bytesRead;
     FRESULT res;
     STM32Flash_StatusTypeDef status;
 
-    uint32_t totalBytesWritten = 0;
-
     printf("Flashing firmware to address 0x%08lx...\n", flashAddress);
+
+    // Check initial alignment of flash address
+    if ((flashAddress % 32) != 0)
+    {
+        printf("Error: Flash address misaligned at 0x%08lx\n", flashAddress);
+        gui_displayUpdateFailed();
+        return false;
+    }
 
     while (bytesRemaining > 0)
     {
         uint32_t chunkSize = (bytesRemaining > sizeof(readBuffer)) ? sizeof(readBuffer) : bytesRemaining;
 
-        // Lire depuis le fichier
+        // Read data from file
         res = f_read(file, readBuffer, chunkSize, &bytesRead);
         if (res != FR_OK || bytesRead != chunkSize)
         {
@@ -409,43 +442,45 @@ static bool update_writeFirmware(uint32_t flashStartAddr, FIL* file, uint32_t si
             return false;
         }
 
-        // Aligner les données si nécessaire
-        uint8_t* dataPtr = readBuffer;
-        if ((uintptr_t)dataPtr % 32 != 0 || bytesRead < 32)
-        {
-            memset(tempBuffer, 0xFF, 32); // Remplir avec des valeurs par défaut
-            memcpy(tempBuffer, dataPtr, bytesRead);
-            dataPtr = tempBuffer;
-        }
-
-        // Vérifier l'alignement de l'adresse flash
-        if (flashAddress % 32 != 0)
-        {
-            printf("Error: Flash address misaligned at 0x%08lx\n", flashAddress);
-            gui_displayUpdateFailed();
-            return false;
-        }
-
-        // Écrire dans la mémoire flash
-        status = STM32Flash_write32B(dataPtr, flashAddress);
-        if (status != STM32FLASH_OK)
-        {
-            printf("Error: Failed to write to flash at 0x%08lx\n", flashAddress);
-            gui_displayUpdateFailed();
-            return false;
-        }
-
-        flashAddress += 32;
         bytesRemaining -= bytesRead;
-        totalBytesWritten += bytesRead;
 
-        // Mise à jour de la progression
-        progress_update(progressManager, step_number, totalBytesWritten, size);
+        // Process this chunk in 32-byte blocks
+        uint32_t offset = 0;
+        while (offset < bytesRead)
+        {
+            uint32_t blockSize = ((bytesRead - offset) >= 32) ? 32 : (bytesRead - offset);
+            uint8_t* dataPtr = readBuffer + offset;
+
+            // If block is not a full 32 bytes, pad with 0xFF
+            if (blockSize < 32)
+            {
+                memset(writeBlock, 0xFF, 32);
+                memcpy(writeBlock, dataPtr, blockSize);
+                dataPtr = writeBlock;
+                blockSize = 32;
+            }
+
+            // Write to flash
+            status = STM32Flash_write32B(dataPtr, flashAddress);
+
+            if (status != STM32FLASH_OK)
+            {
+                printf("Error: Failed to write to flash at 0x%08lx\n", flashAddress);
+                gui_displayUpdateFailed();
+                return false;
+            }
+
+            flashAddress += 32;
+            offset += blockSize;
+            totalBytesWritten += blockSize;
+
+            uint32_t displayedBytes = (totalBytesWritten > size) ? size : totalBytesWritten;
+            progress_update(progressManager, step_number, displayedBytes, size);
+        }
     }
 
     return true;
 }
-
 /**
  * @brief Erases necessary flash sectors for firmware.
  * @param flashStartAddr Starting address of the firmware in flash.
@@ -459,7 +494,7 @@ static bool update_eraseFirmware(uint32_t flashStartAddr, uint32_t size, Progres
     STM32Flash_StatusTypeDef status;
 
     // Determine flash bank and sector
-    uint32_t flashBank = (flashStartAddr < FLASH_BANK_SIZE) ? FLASH_BANK_1 : FLASH_BANK_2;
+    uint32_t flashBank = (flashStartAddr >= ADDR_FLASH_SECTOR_0_BANK2) ? FLASH_BANK_2 : FLASH_BANK_1;
     uint32_t flashSector = stm32_flashGetSector(flashStartAddr);
     uint32_t NbSectors = (size + FLASH_SECTOR_SIZE - 1) / FLASH_SECTOR_SIZE;
     uint32_t sectorsErased = 0;

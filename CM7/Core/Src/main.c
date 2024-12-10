@@ -92,37 +92,41 @@ static bool findPackageFile(char* packageFilePath, size_t maxLen);
  */
 static void gotoFirmware(uint32_t fwFlashStartAdd)
 {
-	HAL_MPU_Disable();
-	HAL_SuspendTick();
+    HAL_MPU_Disable();
+    HAL_SuspendTick();
 
-	__disable_irq(); // Disable interrupt
+    __disable_irq(); // Disable interrupt
 
-	SysTick->CTRL = 0;  // Enabled in application
-	SysTick->LOAD = 0;
-	SysTick->VAL  = 0;
+    SysTick->CTRL = 0;  // Disable SysTick
+    SysTick->LOAD = 0;
+    SysTick->VAL  = 0;
 
-	HAL_RCC_DeInit();
+    HAL_RCC_DeInit();
 
-	for(uint8_t i = 0; i < 8; i++) // Clear all NVIC Enable and Pending registers
-	{
-		NVIC->ICER[i]=0xFFFFFFFF;
-		NVIC->ICPR[i]=0xFFFFFFFF;
-	}
+    for (uint8_t i = 0; i < 8; i++) // Clear all NVIC Enable and Pending registers
+    {
+        NVIC->ICER[i] = 0xFFFFFFFF;
+        NVIC->ICPR[i] = 0xFFFFFFFF;
+    }
 
-	__enable_irq();
+    // Validate firmware address
+    uint32_t appStack = *((volatile uint32_t*) fwFlashStartAdd);
+    uint32_t appEntry = *((volatile uint32_t*) (fwFlashStartAdd + 4));
 
-	pFunction appEntry;
-	uint32_t appStack;
+    SCB_DisableICache();
+    SCB_DisableDCache();
 
-	appStack = (uint32_t) *((volatile uint32_t*) fwFlashStartAdd);
-	appEntry = (pFunction) *((volatile uint32_t*) (fwFlashStartAdd + 4));
-	__DMB();
-	SCB->VTOR = fwFlashStartAdd;
-	__DSB();
-	SysTick->CTRL = 0x0;
-	HAL_DeInit();
-	__set_MSP(appStack);
-	appEntry();
+    __enable_irq();
+
+    __DMB();
+    SCB->VTOR = fwFlashStartAdd;
+    __DSB();
+
+    HAL_DeInit();
+    __set_MSP(appStack);
+
+    pFunction jumpToApplication = (pFunction)appEntry;
+    jumpToApplication();
 }
 
 /**
@@ -196,6 +200,7 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
+  HAL_PWREx_DisableUSBVoltageDetector();
 
   /* USER CODE END Init */
 
@@ -323,7 +328,7 @@ int main(void)
 	printf("Rebooting in 2\n");
 	/* Wait 2 seconds. */
 	HAL_Delay(2000);
-	MX_IWDG1_Init();
+	//MX_IWDG1_Init();
 	NVIC_SystemReset();
 
   /* USER CODE END 2 */
