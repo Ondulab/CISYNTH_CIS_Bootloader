@@ -40,6 +40,9 @@
 #include "update.h"
 #include "update_gui.h"
 
+#include "stm32h7xx_hal_flash_ex.h"
+#include "stm32h7xx_hal_flash.h"
+
 #include "ff.h" // FATFS include
 #include "diskio.h" // DiskIO include
 
@@ -52,10 +55,6 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
-#ifndef HSEM_ID_0
-#define HSEM_ID_0 (0U) /* HW semaphore 0*/
-#endif
 
 /* USER CODE END PD */
 
@@ -85,6 +84,44 @@ static bool findPackageFile(char* packageFilePath, size_t maxLen);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+#include "stm32h7xx_hal.h"
+
+void disableCM4Boot(void)
+{
+	  HAL_FLASH_Unlock();
+	  HAL_FLASH_OB_Unlock();
+
+	  if (READ_BIT(SYSCFG->UR1, SYSCFG_UR1_BCM4)) // Check if CM4 boot is enabled
+	  {
+	      FLASH_OBProgramInitTypeDef obConfig;
+
+	      // Configure CM4 boot to "Disabled"
+	      obConfig.OptionType = OPTIONBYTE_USER; // Specify that we are modifying user options
+	      obConfig.USERType = OB_USER_BCM4; // Target the CM4 boot configuration
+	      obConfig.USERConfig = OB_BCM4_DISABLE; // Disable CM4 boot
+
+	      // Apply the new configuration
+	      if (HAL_FLASHEx_OBProgram(&obConfig) != HAL_OK)
+	      {
+	          // Handle error if necessary
+	          while (1);
+	      }
+
+	      // Launch option bytes reconfiguration
+	      if (HAL_FLASH_OB_Launch() != HAL_OK)
+	      {
+	          // Handle error if necessary
+	          while (1);
+	      }
+
+	      // Restart the system
+	      HAL_NVIC_SystemReset();
+	  }
+
+	  HAL_FLASH_OB_Lock();
+	  HAL_FLASH_Lock();
+}
 
 /**
  * @brief Jump to application from the Bootloader
@@ -136,32 +173,45 @@ static void gotoFirmware(uint32_t fwFlashStartAdd)
  * @param maxLen Maximum length of the buffer
  * @retval true if a package file is found, false otherwise
  */
-static bool findPackageFile(char* packageFilePath, size_t maxLen)
+static bool findPackageFile(char *packageFilePath, size_t maxLen)
 {
-	FRESULT res;
-	FILINFO fno;
-	DIR dir;
-	char *fn;
+    FRESULT res;
+    FILINFO fno;
+    DIR dir;
+    char *fn;
 
-	res = f_opendir(&dir, "0:/");                       /* Open the directory */
-	if (res == FR_OK) {
-		for (;;) {
-			res = f_readdir(&dir, &fno);                /* Read a directory item */
-			if (res != FR_OK || fno.fname[0] == 0) break;   /* Break on error or end of dir */
-			if (fno.fattrib & AM_DIR) {
-				continue;                               /* It is a directory */
-			} else {
-				fn = fno.fname;
-				if (strstr(fn, "cis_package_") == fn && strstr(fn, ".bin")) {
-					snprintf(packageFilePath, maxLen, "0:/%s", fn);
-					f_closedir(&dir);
-					return true;
-				}
-			}
-		}
-		f_closedir(&dir);
-	}
-	return false;
+    res = f_opendir(&dir, FW_PATH); // Open the directory
+    if (res == FR_OK)
+    {
+        for (;;)
+        {
+            res = f_readdir(&dir, &fno); // Read a directory item
+            if ((res != FR_OK) || (fno.fname[0] == 0))
+            {
+                break; // End of directory or error
+            }
+
+            // Check if it's a file, not a directory
+            if (fno.fattrib & AM_DIR)
+            {
+                continue;
+            }
+            else
+            {
+                fn = fno.fname;
+                // Look for filenames that start with "cis_package_" and contain ".bin"
+                if ((strstr(fn, "cis_package_") == fn) && strstr(fn, ".bin"))
+                {
+                    // Insert a slash between FW_PATH and fn
+                    snprintf(packageFilePath, maxLen, "%s/%s", FW_PATH, fn);
+                    f_closedir(&dir);
+                    return true;
+                }
+            }
+        }
+        f_closedir(&dir);
+    }
+    return false;
 }
 
 /* USER CODE END 0 */
@@ -200,8 +250,7 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-  HAL_PWREx_DisableUSBVoltageDetector();
-
+  disableCM4Boot();
   /* USER CODE END Init */
 
   /* Configure the system clock */
@@ -237,7 +286,7 @@ int main(void)
   MX_FATFS_Init();
   /* USER CODE BEGIN 2 */
 
-	printf("START BOOTLOADER\n");
+	printf("\n------- START BOOTLOADER -------\n");
 
 	gui_init();
 
@@ -262,16 +311,16 @@ int main(void)
 		NVIC_SystemReset();
 	}
 
-	printf("- FILE INITIALIZATION -\n");
+	printf("----- FILE INITIALIZATION ------\n");
 
 	FRESULT fres; // Variable to store the result of FATFS operations
 
 	// Attempt to mount the file system on SD card or USB (where the package is stored)
-	fres = f_mount(&fs, "0:", 1); // '0:' represents the logical drive number for the SD card or USB
+	fres = f_mount(&fs, "0:", 1);
 	if (fres != FR_OK)
 	{
-		printf("FS mount ERROR\n");
-		gui_displayUpdateFailed();
+	    printf("FS mount ERROR\n");
+	    gui_displayUpdateFailed();
 	}
 	else
 	{
@@ -284,7 +333,8 @@ int main(void)
 		{
 			printf("Found package file: %s\n", packageFilePath);
 
-			// UPDATE FROM PACKAGE FILE
+			printf("--------- START UPDATE ---------\n");
+
 			if (update_processPackageFile(packageFilePath))
 			{
 				printf("Firmware update completed successfully\n");
@@ -297,7 +347,7 @@ int main(void)
 		}
 		else
 		{
-			printf("No package file found\n");
+			printf("No firmware found in /firmware/\n");
 			gui_displayUpdateFailed();
 		}
 	}
@@ -328,7 +378,7 @@ int main(void)
 	printf("Rebooting in 2\n");
 	/* Wait 2 seconds. */
 	HAL_Delay(2000);
-	//MX_IWDG1_Init();
+	MX_IWDG1_Init();
 	NVIC_SystemReset();
 
   /* USER CODE END 2 */
