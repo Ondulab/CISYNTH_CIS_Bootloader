@@ -50,7 +50,9 @@ static bool update_writeFirmware(uint32_t flashStartAddr, FIL* file, uint32_t si
 static bool update_writeExternalData(FIL* file, uint32_t external_size, ProgressManager* progressManager, uint32_t step_number);
 
 /**
- * @brief Reads a little-endian uint32 from a byte buffer.
+ * @brief Reads a 32-bit unsigned integer from a buffer in little-endian format.
+ * @param buffer Pointer to the buffer containing the data.
+ * @return The parsed 32-bit unsigned integer.
  */
 static uint32_t update_read_uint32_le(const uint8_t *buffer)
 {
@@ -62,6 +64,10 @@ static uint32_t update_read_uint32_le(const uint8_t *buffer)
 
 /**
  * @brief Processes a firmware update package file.
+ * This function handles the full update process including CRC verification,
+ * backup, erasing, flashing, and external data handling.
+ * @param packageFilePath Path to the firmware package file.
+ * @return True if the update process is successful, false otherwise.
  */
 bool update_processPackageFile(const TCHAR* packageFilePath)
 {
@@ -332,10 +338,8 @@ static bool update_calculateCRC(FIL* file, ProgressManager* progressManager, uin
 
 /**
  * @brief Backs up firmware from flash memory to a specified file.
- *
  * This function reads firmware data from flash memory and writes it
  * to a backup file. Progress updates are reported during the operation.
- *
  * @param flashStartAddr Starting address in flash memory.
  * @param size Size of the firmware to backup in bytes.
  * @param backupFilePath Path to the backup file to create.
@@ -612,6 +616,14 @@ static bool update_writeExternalData(FIL* file, uint32_t external_size, Progress
 	return true;
 }
 
+/**
+ * @brief Restores previously backed-up firmware versions.
+ *
+ * This function erases the flash memory regions designated for the firmware,
+ * then writes back the backed-up firmware stored in files.
+ *
+ * @return True if the restore process completes successfully, false otherwise.
+ */
 bool update_restoreBackupFirmwares(void)
 {
     const int NUM_STEPS = 4;
