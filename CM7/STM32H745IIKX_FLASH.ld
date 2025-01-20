@@ -47,9 +47,10 @@ MEMORY
 {
   FLASH (rx)    			: ORIGIN = 0x08000000, LENGTH = 128K 
   FLASH_DATA (rw)    		: ORIGIN = 0x08020000, LENGTH = 128K 
+  FLASH_FW (rw)    			: ORIGIN = 0x08000000 + LENGTH(FLASH) + LENGTH(FLASH_DATA), LENGTH = 2048K -  (LENGTH(FLASH) + LENGTH(FLASH_DATA))
   DTCM (rw)   				: ORIGIN = 0x20000000, LENGTH = 128K
   RAM_SHARED (rw) 			: ORIGIN = 0x24000000, LENGTH = 256
-  RAM_SHARED_CACHED (rw) 	: ORIGIN = 0x24000000 + LENGTH(RAM_SHARED), LENGTH = 120K
+  RAM_SHARED_CACHED (rw) 	: ORIGIN = 0x24000000 + LENGTH(RAM_SHARED), LENGTH = 32K
   RAM_AXI (rwx)   			: ORIGIN = 0x24000000 + LENGTH(RAM_SHARED) + LENGTH(RAM_SHARED_CACHED), LENGTH = 512K - (LENGTH(RAM_SHARED) + LENGTH(RAM_SHARED_CACHED))
   RAM_D1 (r)      			: ORIGIN = 0x30000000, LENGTH = 128K
   RAM_D2 (rw)   			: ORIGIN = 0x30020000, LENGTH = 160K
@@ -138,13 +139,6 @@ SECTIONS
   } >FLASH
   
   /* user sections... */
-  .shared :
-  {
-    . = ALIGN(4);
-    KEEP (*(.shared_var));  
-    KEEP (*(.shared_config));
-    . = ALIGN(4); 
-  } >RAM_SHARED
 
   /* Used by the startup to initialize data */
   _sidata = LOADADDR(.data);
@@ -189,18 +183,6 @@ SECTIONS
     . = . + _Min_Stack_Size;
     . = ALIGN(8);
   } >RAM_AXI
-  
-    .lwip_sec (NOLOAD) :
-  {
-    . = ABSOLUTE(0x30040000);
-    *(.RxDecripSection) 
-    
-    . = ABSOLUTE(0x30040100);
-    *(.TxDecripSection)
-    
-    . = ABSOLUTE(0x30040200);
-    *(.Rx_PoolSection)  
-  } >RAM_D2
 
   /* Remove information from the compiler libraries */
   /DISCARD/ :

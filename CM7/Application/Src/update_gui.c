@@ -45,24 +45,24 @@ void gui_init(void)
  */
 void gui_displayVersion(const char* version)
 {
-    ssd1362_clearBuffer();
+	ssd1362_clearBuffer();
 
-    // Draw border
-    ssd1362_fillRect(0, DISPLAY_HEAD_Y1POS, DISPLAY_WIDTH, DISPLAY_HEAD_Y2POS, BANNER_BACKGROUND_COLOR, true);
-    ssd1362_drawRect(0, 0, 255, 63, BANNER_BACKGROUND_COLOR, false);
+	// Draw border
+	ssd1362_fillRect(0, DISPLAY_HEAD_Y1POS, DISPLAY_WIDTH, DISPLAY_HEAD_Y2POS, BANNER_BACKGROUND_COLOR, true);
+	ssd1362_drawRect(0, 0, 255, 63, BANNER_BACKGROUND_COLOR, false);
 
-    char versionString[32];
+	char versionString[32];
 
-    ssd1362_drawString(0, DISPLAY_HEAD_Y1POS + 1, (int8_t *)"         FIRMWARE UPDATE        ", 0xF, 8);
+	ssd1362_drawString(0, DISPLAY_HEAD_Y1POS + 1, (int8_t *)"         FIRMWARE UPDATE        ", 0xF, 8);
 
-    snprintf(versionString, sizeof(versionString),  (char *)"        Updating -> %s      ", version);
+	snprintf(versionString, sizeof(versionString),  (char *)"        Updating -> %s    	  ", version);
 
-    ssd1362_drawString(0, 15, (int8_t *)versionString, 0xF, 8);
+	ssd1362_drawString(0, 15, (int8_t *)versionString, 0xF, 8);
 
-    ssd1362_drawString(0, 45, 				       (int8_t *)"        DO NOT POWER OFF        ", 0xF, 8);
+	ssd1362_drawString(0, 45, (int8_t *)					"        DO NOT POWER OFF        ", 0xF, 8);
 
-    // Display the frame buffer
-    ssd1362_writeFullBuffer();
+	// Display the frame buffer
+	ssd1362_writeFullBuffer();
 }
 
 /**
@@ -71,13 +71,28 @@ void gui_displayVersion(const char* version)
  */
 void gui_displayUpdateProcess(int32_t progressBar)
 {
-    // Sanity check
-    if (progressBar > 100)
-        progressBar = 100;
-    if (progressBar < 0)
-        progressBar = 0;
+	ssd1362_progressBar(26, 27, progressBar, 0xF);
+}
 
-    ssd1362_progressBar(26, 27, progressBar, 0xF);
+/**
+ * @brief Displays an error message when the update process fails.
+ */
+void gui_displayRestorePreviousVersion(void)
+{
+	ssd1362_clearBuffer();
+
+	// Draw border
+	ssd1362_fillRect(0, DISPLAY_HEAD_Y1POS, DISPLAY_WIDTH, DISPLAY_HEAD_Y2POS, BANNER_BACKGROUND_COLOR, false);
+	ssd1362_drawRect(0, 0, 255, 63, BANNER_BACKGROUND_COLOR, false);
+
+	ssd1362_drawString(0, DISPLAY_HEAD_Y1POS + 1, (int8_t *)"         FIRMWARE UPDATE        ", 0xF, 8);
+
+	ssd1362_drawString(0, 15, (int8_t *)					"  RESTORE THE PREVIOUS VERSION  ", 0xF, 8);
+
+	ssd1362_drawString(0, 45, (int8_t *)					"        DO NOT POWER OFF        ", 0xF, 8);
+
+	// Display the frame buffer
+	ssd1362_writeFullBuffer();
 }
 
 /**
@@ -85,47 +100,45 @@ void gui_displayUpdateProcess(int32_t progressBar)
  */
 void gui_displayUpdateFailed(void)
 {
-    ssd1362_clearBuffer();
+	ssd1362_clearBuffer();
 
-    // Draw border
-    ssd1362_fillRect(0, DISPLAY_HEAD_Y1POS, DISPLAY_WIDTH, DISPLAY_HEAD_Y2POS, BANNER_BACKGROUND_COLOR, false);
-    ssd1362_drawRect(0, 0, 255, 63, BANNER_BACKGROUND_COLOR, false);
+	// Draw border
+	ssd1362_fillRect(0, DISPLAY_HEAD_Y1POS, DISPLAY_WIDTH, DISPLAY_HEAD_Y2POS, BANNER_BACKGROUND_COLOR, false);
+	ssd1362_drawRect(0, 0, 255, 63, BANNER_BACKGROUND_COLOR, false);
 
-    ssd1362_drawString(0, DISPLAY_HEAD_Y1POS + 1, (int8_t *)"         FIRMWARE UPDATE        ", 0xF, 8);
+	ssd1362_drawString(0, DISPLAY_HEAD_Y1POS + 1, (int8_t *)"         FIRMWARE UPDATE        ", 0xF, 8);
 
-    ssd1362_drawString(0, 45, (int8_t *)"  RESTORE THE PREVIOUS VERSION  ", 0xF, 8);
+	for (uint32_t i = 0; i < 10; i++)
+	{
+		ssd1362_drawString(0, 25, (int8_t *)				"          UPDATE FAILED         ", 0xF, 8);
+		ssd1362_writeFullBuffer();
+		HAL_Delay(200);
 
-    for (uint32_t i = 0; i < 10; i++)
-    {
-        ssd1362_drawString(0, 25, (int8_t *)"          UPDATE FAILED         ", 0xF, 8);
-        ssd1362_writeFullBuffer();
-        HAL_Delay(200);
-
-        ssd1362_fillRect(2, 25, 254, 33, 0, false);
-        ssd1362_writeFullBuffer();
-        HAL_Delay(200);
-    }
+		ssd1362_fillRect(2, 25, 254, 33, 0, false);
+		ssd1362_writeFullBuffer();
+		HAL_Delay(200);
+	}
 }
 
 /**
  * @brief Displays a message indicating the update process is complete.
  */
-void gui_displayUpdateWrited(void)
+void gui_displayUpdateTesting(void)
 {
-    ssd1362_clearBuffer();
+	ssd1362_clearBuffer();
 
-    // Draw border
-    ssd1362_fillRect(0, DISPLAY_HEAD_Y1POS, DISPLAY_WIDTH, DISPLAY_HEAD_Y2POS, BANNER_BACKGROUND_COLOR, false);
-    ssd1362_drawRect(0, 0, 255, 63, BANNER_BACKGROUND_COLOR, false);
+	// Draw border
+	ssd1362_fillRect(0, DISPLAY_HEAD_Y1POS, DISPLAY_WIDTH, DISPLAY_HEAD_Y2POS, BANNER_BACKGROUND_COLOR, false);
+	ssd1362_drawRect(0, 0, 255, 63, BANNER_BACKGROUND_COLOR, false);
 
-    ssd1362_drawString(0, DISPLAY_HEAD_Y1POS + 1, (int8_t *)"         FIRMWARE UPDATE        ", 0xF, 8);
+	ssd1362_drawString(0, DISPLAY_HEAD_Y1POS + 1, (int8_t *)"         FIRMWARE UPDATE        ", 0xF, 8);
 
-    ssd1362_drawString(0, 25, (int8_t *)"     START FIRMWARE TESTING     ", 0xF, 8);
+	ssd1362_drawString(0, 25, (int8_t *)					"     START FIRMWARE TESTING     ", 0xF, 8);
 
-    ssd1362_drawString(0, 45, (int8_t *)"              REBOOT            ", 0xF, 8);
+	ssd1362_drawString(0, 45, (int8_t *)					"              REBOOT            ", 0xF, 8);
 
-    // Display the frame buffer
-    ssd1362_writeFullBuffer();
+	// Display the frame buffer
+	ssd1362_writeFullBuffer();
 }
 
 /**
@@ -133,18 +146,18 @@ void gui_displayUpdateWrited(void)
  */
 void gui_displayUpdateSuccess(void)
 {
-    ssd1362_clearBuffer();
+	ssd1362_clearBuffer();
 
-    // Draw border
-    ssd1362_fillRect(0, DISPLAY_HEAD_Y1POS, DISPLAY_WIDTH, DISPLAY_HEAD_Y2POS, BANNER_BACKGROUND_COLOR, true);
-    ssd1362_drawRect(0, 0, 255, 63, BANNER_BACKGROUND_COLOR, false);
+	// Draw border
+	ssd1362_fillRect(0, DISPLAY_HEAD_Y1POS, DISPLAY_WIDTH, DISPLAY_HEAD_Y2POS, BANNER_BACKGROUND_COLOR, true);
+	ssd1362_drawRect(0, 0, 255, 63, BANNER_BACKGROUND_COLOR, false);
 
-    ssd1362_drawString(0, DISPLAY_HEAD_Y1POS + 1, (int8_t *)"         FIRMWARE UPDATE        ", 0xF, 8);
+	ssd1362_drawString(0, DISPLAY_HEAD_Y1POS + 1, (int8_t *)"         FIRMWARE UPDATE        ", 0xF, 8);
 
-    ssd1362_drawString(0, 25, (int8_t *)"    FIRMWARE TESTING SUCCESS    ", 0xF, 8);
+ssd1362_drawString(0, 25, (int8_t *)						"     FIRMWARE UPDATE SUCCESS    ", 0xF, 8);
 
-    ssd1362_drawString(0, 45, (int8_t *)"              REBOOT            ", 0xF, 8);
+	ssd1362_drawString(0, 45, (int8_t *)					"              REBOOT            ", 0xF, 8);
 
-    // Display the frame buffer
-    ssd1362_writeFullBuffer();
+	// Display the frame buffer
+	ssd1362_writeFullBuffer();
 }

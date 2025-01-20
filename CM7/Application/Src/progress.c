@@ -17,14 +17,14 @@
 #include "progress.h"
 #include "update_gui.h" // For gui_displayUpdateProcess
 
-void progress_init(ProgressManager* pm, int num_steps)
+void progress_init(ProgressManager* pm, uint32_t num_steps)
 {
     pm->num_steps = num_steps;
     pm->current_step = 1;
     pm->last_progress = -1; // Initialize to -1 to force an update on first call
 }
 
-void progress_update(ProgressManager* pm, int step_number, uint32_t current_value, uint32_t total_value)
+void progress_update(ProgressManager* pm, uint32_t step_number, uint32_t current_value, uint32_t total_value)
 {
     if (step_number < 1 || step_number > pm->num_steps)
     {
@@ -43,13 +43,14 @@ void progress_update(ProgressManager* pm, int step_number, uint32_t current_valu
     // Calculate overall progress
     float overall_progress = ((step_number - 1) + (step_progress / 100.0f)) * (100.0f / pm->num_steps);
 
-    int int_progress = (int)overall_progress;
+    int32_t int_progress = (int32_t)overall_progress;
 
     // Only update if the progress value has changed
     if (int_progress != pm->last_progress)
     {
         pm->last_progress = int_progress;
         // Update the progress bar
+
         gui_displayUpdateProcess(int_progress);
     }
 }

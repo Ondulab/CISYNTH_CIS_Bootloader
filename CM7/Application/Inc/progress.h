@@ -32,7 +32,7 @@ typedef struct
  * @param pm Pointer to the ProgressManager structure.
  * @param num_steps Total number of steps in the process.
  */
-void progress_init(ProgressManager* pm, int num_steps);
+void progress_init(ProgressManager* pm, uint32_t num_steps);
 
 /**
  * @brief Updates the progress manager with the current progress.
@@ -41,6 +41,6 @@ void progress_init(ProgressManager* pm, int num_steps);
  * @param current_value Current value of the progress metric.
  * @param total_value Total value of the progress metric.
  */
-void progress_update(ProgressManager* pm, int step_number, uint32_t current_value, uint32_t total_value);
+void progress_update(ProgressManager* pm, uint32_t step_number, uint32_t current_value, uint32_t total_value);
 
 #endif // PROGRESS_H

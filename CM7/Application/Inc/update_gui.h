@@ -25,8 +25,9 @@ extern "C" {
 void gui_init(void);
 void gui_displayVersion(const char* version);
 void gui_displayUpdateProcess(int32_t progressBar);
+void gui_displayRestorePreviousVersion(void);
 void gui_displayUpdateFailed(void);
-void gui_displayUpdateWrited(void);
+void gui_displayUpdateTesting(void);
 void gui_displayUpdateSuccess(void);
 
 /* Exported macros -----------------------------------------------------------*/

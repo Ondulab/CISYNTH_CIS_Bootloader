@@ -36,6 +36,7 @@ extern "C" {
 /* Exported functions --------------------------------------------------------*/
 
 bool update_processPackageFile(const TCHAR *packageFilePath);
+bool update_restoreBackupFirmwares(void);
 
 /* Exported macros -----------------------------------------------------------*/
 /* Add any necessary macros here */
