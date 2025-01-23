@@ -27,16 +27,25 @@ extern "C" {
 #include <stdbool.h>
 #include "ff.h"       // For FatFS types
 
+
+/* Private define ------------------------------------------------------------*/
+
+/* Custom return type for update operations -----------------------------*/
+typedef enum {
+    FWUPDATE_OK = 0,
+	FWUPDATE_ERROR = 1,
+	FWUPDATE_CRCMISMATCH = 2
+} fwupdate_StatusTypeDef;
+
 /* Exported constants --------------------------------------------------------*/
-#define FW_CM7_START_ADDR 0x08040000
-#define FW_CM4_START_ADDR 0x08100000
 
 /* Exported types ------------------------------------------------------------*/
 
 /* Exported functions --------------------------------------------------------*/
 
-bool update_processPackageFile(const TCHAR *packageFilePath);
-bool update_restoreBackupFirmwares(void);
+fwupdate_StatusTypeDef update_findPackageFile(char *packageFilePath, size_t maxLen);
+fwupdate_StatusTypeDef update_restoreBackupFirmwares(void);
+fwupdate_StatusTypeDef update_processPackageFile(const TCHAR* packageFilePath);
 
 /* Exported macros -----------------------------------------------------------*/
 /* Add any necessary macros here */
