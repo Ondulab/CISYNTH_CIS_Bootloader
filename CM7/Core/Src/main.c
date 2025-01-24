@@ -77,7 +77,6 @@ static void MPU_Config(void);
 
 /* Function prototypes */
 static void configureBootConfiguration(void);
-static void disableCM4Boot(void);
 static void reboot(void);
 static void gotoFirmware(uint32_t fwFlashStartAdd);
 
@@ -88,6 +87,11 @@ static void gotoFirmware(uint32_t fwFlashStartAdd);
 
 #include "stm32h7xx_hal.h"
 
+/**
+ * @brief  Configure boot settings for CM4.
+ *         This function checks and updates the option bytes to ensure the correct
+ *         boot address and permissions for the Cortex-M4 core.
+ */
 void configureBootConfiguration(void)
 {
     bool needUpdate = false;
@@ -98,10 +102,10 @@ void configureBootConfiguration(void)
     HAL_FLASH_Unlock();
     HAL_FLASH_OB_Unlock();
 
-    // 2) Read current option bytes configuration
+    // 2) Read the current option bytes configuration
     HAL_FLASHEx_OBGetConfig(&currentOB);
 
-    // 3) Check if the current boot addresses match what we want
+    // 3) Check if the current boot addresses match the desired ones
     uint32_t currentCm4Boot = currentOB.CM4BootAddr0;
 
     if (currentCm4Boot != FW_CM4_START_ADDR)
@@ -113,7 +117,7 @@ void configureBootConfiguration(void)
         needUpdate = true;
     }
 
-    // 4) Vérifier si le CM4 est actuellement autorisé à booter
+    // 4) Check if the CM4 is currently allowed to boot
     if (READ_BIT(SYSCFG->UR1, SYSCFG_UR1_BCM4) != 0U)
     {
         newOB.OptionType |= OPTIONBYTE_USER;
@@ -123,66 +127,28 @@ void configureBootConfiguration(void)
         needUpdate = true;
     }
 
-    // 5) Appliquer la nouvelle configuration si besoin
+    // 5) Apply the new configuration if needed
     if (needUpdate)
     {
-        // Programmer les nouveaux option bytes
+        // Program the new option bytes
         if (HAL_FLASHEx_OBProgram(&newOB) != HAL_OK)
         {
             Error_Handler();
         }
 
-        // Lancer la mise à jour des OB
+        // Trigger the update of the option bytes
         if (HAL_FLASH_OB_Launch() != HAL_OK)
         {
             Error_Handler();
         }
 
-        // Redémarrer le système pour appliquer les changements
+        // Restart the system to apply the changes
         HAL_NVIC_SystemReset();
     }
 
     // 8) Relock
     HAL_FLASH_OB_Lock();
     HAL_FLASH_Lock();
-}
-
-/**
- * @brief  Disable the boot of Cortex-M4 processor.
- *         This function modifies the Option Bytes configuration to disable CM4 boot.
- */
-static void disableCM4Boot(void)
-{
-	HAL_FLASH_Unlock();
-	HAL_FLASH_OB_Unlock();
-
-	if (READ_BIT(SYSCFG->UR1, SYSCFG_UR1_BCM4)) // Check if CM4 boot is enabled
-	{
-		FLASH_OBProgramInitTypeDef obConfig;
-
-		// Configure CM4 boot to "Disabled"
-		obConfig.OptionType = OPTIONBYTE_USER; // Specify that we are modifying user options
-		obConfig.USERType = OB_USER_BCM4; // Target the CM4 boot configuration
-		obConfig.USERConfig = OB_BCM4_DISABLE; // Disable CM4 boot
-
-		// Apply the new configuration
-		if (HAL_FLASHEx_OBProgram(&obConfig) != HAL_OK)
-		{
-			Error_Handler();
-		}
-
-		// Launch option bytes reconfiguration
-		if (HAL_FLASH_OB_Launch() != HAL_OK)
-		{
-			Error_Handler();
-		}
-
-		// Restart the system
-		HAL_NVIC_SystemReset();
-	}
-
-	HAL_FLASH_OB_Lock();
-	HAL_FLASH_Lock();
 }
 
 /**
@@ -275,7 +241,6 @@ int main(void)
 
 	/* USER CODE BEGIN Init */
 	configureBootConfiguration();
-	//disableCM4Boot();
 	/* USER CODE END Init */
 
 	/* Configure the system clock */

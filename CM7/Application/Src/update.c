@@ -44,7 +44,6 @@ uint8_t tempBuffer[32] __attribute__((aligned(32)));
 
 /* Function prototypes -------------------------------------------------------*/
 static uint32_t update_readUint32LE(const uint8_t *buffer);
-static uint32_t update_getFirmwareSize(uint32_t flash_start, uint32_t max_size);
 static fwupdate_StatusTypeDef update_calculateCRC(FIL* file, ProgressManager* progressManager, uint32_t step_number);
 static fwupdate_StatusTypeDef update_backupFirmware(uint32_t flashStartAddr, uint32_t size, const char* backupFilePath, ProgressManager* progressManager, uint32_t step_number);
 static fwupdate_StatusTypeDef update_eraseFirmware(uint32_t flashStartAddr, uint32_t size, ProgressManager* progressManager, uint32_t step_number);
@@ -62,24 +61,6 @@ static uint32_t update_readUint32LE(const uint8_t *buffer)
 			((uint32_t)buffer[1] << 8) |
 			((uint32_t)buffer[2] << 16) |
 			((uint32_t)buffer[3] << 24);
-}
-
-static uint32_t update_getFirmwareSize(uint32_t flash_start, uint32_t max_size)
-{
-    uint32_t size = 0;
-    uint32_t *ptr = (uint32_t *)flash_start;
-
-    while (size < max_size)
-    {
-        if (*ptr == 0xFFFFFFFF) // Zone effacée détectée
-        {
-            break;
-        }
-        ptr++;
-        size += 4; // On avance de 4 octets
-    }
-
-    return size;
 }
 
 /**
@@ -259,23 +240,20 @@ static fwupdate_StatusTypeDef update_backupFirmware(uint32_t flashStartAddr, uin
 }
 
 /**
- * @brief Writes firmware to flash memory from a specified file.
+ * @brief  Writes firmware to flash memory from a specified file.
+ *         This function reads firmware data from a file and writes it to flash memory
+ *         in aligned 32-byte blocks. It ensures proper alignment, handles padding,
+ *         and updates the progress manager accordingly.
  *
- * This function reads firmware data from a file and writes it to flash memory
- * in aligned 32-byte blocks. Progress updates are reported during the operation.
+ * @param  flashStartAddr  Starting address in flash memory.
+ * @param  file            Pointer to the file containing the firmware.
+ * @param  size            Size of the firmware to write in bytes.
+ * @param  progressManager Pointer to the progress manager for updates.
+ * @param  step_number     Step number for the progress manager.
  *
- * @param flashStartAddr Starting address in flash memory.
- * @param file Pointer to the file containing the firmware.
- * @param size Size of the firmware to write in bytes.
- * @param progressManager Pointer to the progress manager for updates.
- * @param step_number Step number for the progress manager.
  * @return FWUPDATE_OK if the update process is successful, FWUPDATE_ERROR otherwise.
  */
-static fwupdate_StatusTypeDef update_writeFirmware(uint32_t flashStartAddr,
-                                                   FIL* file,
-                                                   uint32_t size,
-                                                   ProgressManager* progressManager,
-                                                   uint32_t step_number)
+static fwupdate_StatusTypeDef update_writeFirmware(uint32_t flashStartAddr, FIL* file, uint32_t size, ProgressManager* progressManager, uint32_t step_number)
 {
     uint8_t readBuffer[BUFFER_SIZE] __attribute__((aligned(32)));
     uint8_t block32[32]     __attribute__((aligned(32)));
@@ -287,7 +265,7 @@ static fwupdate_StatusTypeDef update_writeFirmware(uint32_t flashStartAddr,
 
     printf("Flashing firmware to address 0x%08lx...\n", (unsigned long)flashAddress);
 
-    // Vérifier alignement
+    // Verify alignment
     if ((flashAddress % 32) != 0)
     {
         printf("Error: Flash address misaligned at 0x%08lx\n", (unsigned long)flashAddress);
@@ -298,7 +276,7 @@ static fwupdate_StatusTypeDef update_writeFirmware(uint32_t flashStartAddr,
     uint32_t remaining = size;
     while (remaining > 0)
     {
-        // 1) Lire un chunk depuis le fichier
+        // 1) Read a chunk from the file
         uint32_t chunkSize = (remaining > sizeof(readBuffer)) ? sizeof(readBuffer) : remaining;
 
         res = f_read(file, readBuffer, chunkSize, &bytesRead);
@@ -309,28 +287,26 @@ static fwupdate_StatusTypeDef update_writeFirmware(uint32_t flashStartAddr,
             return FWUPDATE_ERROR;
         }
 
-        // On traitera "chunkSize" octets dans readBuffer
-        // puis on passera au chunk suivant.
         remaining -= chunkSize;
 
-        // 2) Écrire ce chunk en blocs de 32 octets dans la Flash
+        // 2) Write this chunk in 32-byte blocks to flash memory
         uint32_t offset = 0;
         while (offset < chunkSize)
         {
-            // Combien d'octets dans ce bloc de 32 ?
+            // Determine the size of the next 32-byte block
             uint32_t blockSize = (chunkSize - offset >= 32) ? 32 : (chunkSize - offset);
 
-            // Copier dans block32
+            // Copy data into block32
             memcpy(block32, &readBuffer[offset], blockSize);
 
-            // Si bloc < 32 octets, on complète avec 0xFF
+            // If block is < 32 bytes, pad with 0xFF
             if (blockSize < 32)
             {
                 memset(&block32[blockSize], 0xFF, 32 - blockSize);
-                blockSize = 32;  // Pour la vérification/écriture
+                blockSize = 32;  // Ensure correct size for write operation
             }
 
-            // 3) Appel à la fonction "fiable" de flash, qui écrit 32 octets
+            // 3) Perform a reliable 32-byte flash write
             if (STM32Flash_reliableWrite(flashAddress, block32, blockSize, 5) != STM32FLASH_OK)
             {
                 printf("Error: Reliable flash write failed at 0x%08lx\n", (unsigned long)flashAddress);
@@ -338,21 +314,16 @@ static fwupdate_StatusTypeDef update_writeFirmware(uint32_t flashStartAddr,
                 return FWUPDATE_ERROR;
             }
 
-            // 4) Avancer pointeur flash de 32, offset de la taille réelle de data
+            // 4) Advance flash pointer by 32, offset by actual data size
             flashAddress += 32;
             offset       += (blockSize == 32) ? (uint32_t)(blockSize < (chunkSize - offset) ? 32 : (chunkSize - offset))
                                               : blockSize;
 
-            // 5) Mise à jour du total écrit (en octets “utiles”, c’est blockSize s’il y avait 32, ou la partie “réelle”)
-            //    Pour la progression, on préfère compter seulement les “vrais” octets du firmware, pas le padding.
-            //    => On peut donc ajouter (blockSize == 32 ? (chunkSize - offset) : blockSize)
-            //    mais c'est un peu confus. Plus simple : un compteur plus précis.
+            // 5) Update the total written bytes (excluding padding)
             totalWritten += (blockSize == 32) ? ((offset <= chunkSize) ? 32 : (chunkSize - (offset - 32)))
                                               : blockSize;
 
-            // 6) Mise à jour de la barre de progression
-            //    Pour simplifier, on incrémente "totalWritten" du vrai nombre d'octets firmware (blockSize avant padding)
-            //    Ici, on peut faire un calcul plus clair :
+            // 6) Update the progress bar
             uint32_t displayedBytes = (totalWritten > size) ? size : totalWritten;
             progress_update(progressManager, step_number, displayedBytes, size);
         }
@@ -397,11 +368,16 @@ static fwupdate_StatusTypeDef update_eraseFirmware(uint32_t flashStartAddr, uint
 }
 
 /**
- * @brief Writes the external data to the file system.
- * @param file Pointer to the open package file.
- * @param external_size Size of the external data.
- * @param progressManager Pointer to the progress manager.
- * @param step_number The step number for progress tracking.
+ * @brief  Writes external data to the file system.
+ *         This function reads data from an open package file and writes it
+ *         to the file system in manageable chunks to prevent memory overload.
+ *         A reliable write operation with CRC verification is performed.
+ *
+ * @param  file            Pointer to the open package file.
+ * @param  external_size   Size of the external data in bytes.
+ * @param  progressManager Pointer to the progress manager for tracking progress.
+ * @param  step_number     Step number for progress tracking.
+ *
  * @return FWUPDATE_OK if the update process is successful, FWUPDATE_ERROR otherwise.
  */
 static fwupdate_StatusTypeDef update_writeExternalData(FIL* file, uint32_t external_size, ProgressManager* progressManager, uint32_t step_number)
@@ -415,7 +391,7 @@ static fwupdate_StatusTypeDef update_writeExternalData(FIL* file, uint32_t exter
 
     printf("Writing external data to the file system...\n");
 
-    // Ouverture du fichier de destination
+    // Open the destination file
     FIL externalFile;
     res = f_open(&externalFile, "0:/External_MAX8.tar.gz", FA_WRITE | FA_READ | FA_CREATE_ALWAYS);
     if (res != FR_OK)
@@ -425,11 +401,11 @@ static fwupdate_StatusTypeDef update_writeExternalData(FIL* file, uint32_t exter
         return FWUPDATE_ERROR;
     }
 
-    // Traitement en chunks pour éviter une surcharge mémoire
+    // Process data in chunks to avoid memory overload
     uint32_t bytesToWrite = external_size;
     while (bytesToWrite > 0)
     {
-        // Lire un chunk de données depuis le fichier source
+        // Read a chunk of data from the source file
         uint32_t chunkSize = (bytesToWrite > BUFFER_SIZE) ? BUFFER_SIZE : bytesToWrite;
         res = f_read(file, readBuffer, chunkSize, &bytesRead);
         if (res != FR_OK || bytesRead != chunkSize)
@@ -440,7 +416,7 @@ static fwupdate_StatusTypeDef update_writeExternalData(FIL* file, uint32_t exter
             return FWUPDATE_ERROR;
         }
 
-        // Écriture fiable avec vérification CRC
+        // Perform a reliable write with CRC verification
         if (file_reliableWrite(&externalFile, readBuffer, bytesRead, 5) != FILEMANAGER_OK)
         {
             printf("Error: Reliable write failed in file system\n");
@@ -452,11 +428,11 @@ static fwupdate_StatusTypeDef update_writeExternalData(FIL* file, uint32_t exter
         bytesToWrite -= bytesRead;
         totalBytesWritten += bytesRead;
 
-        // Mise à jour de la barre de progression
+        // Update progress bar
         progress_update(progressManager, step_number, totalBytesWritten, totalBytesToWrite);
     }
 
-    // Fermeture du fichier
+    // Close the file
     f_close(&externalFile);
 
     return FWUPDATE_OK;
@@ -525,10 +501,10 @@ fwupdate_StatusTypeDef update_findPackageFile(char *packageFilePath, size_t maxL
 }
 
 /**
- * @brief Restores previously backed-up firmware versions.
- *
- * This function erases the flash memory regions designated for the firmware,
- * then writes back the backed-up firmware stored in files.
+ * @brief  Restores previously backed-up firmware versions.
+ *         This function erases the designated flash memory regions and writes
+ *         back the backed-up firmware stored in files. It ensures each step
+ *         is properly tracked with a progress manager.
  *
  * @return FWUPDATE_OK if the update process is successful, FWUPDATE_ERROR otherwise.
  */
@@ -549,7 +525,7 @@ fwupdate_StatusTypeDef update_restoreBackupFirmwares(void)
     FRESULT fres;
     FSIZE_t backupSize;
 
-    // Étape 1: Effacer la mémoire flash du CM7
+    // Step 1: Erase CM7 flash region
     printf("Step 1: Erasing CM7 region\n");
     snprintf(backupPath, sizeof(backupPath), "%s/%s", FW_PATH, "backup_cm7.bin");
     fres = f_open(&backupFile, backupPath, FA_READ);
@@ -567,7 +543,7 @@ fwupdate_StatusTypeDef update_restoreBackupFirmwares(void)
     }
     f_close(&backupFile);
 
-    // Étape 2: Effacer la mémoire flash du CM4
+    // Step 2: Erase CM4 flash region
     printf("Step 2: Erasing CM4 region\n");
     snprintf(backupPath, sizeof(backupPath), "%s/%s", FW_PATH, "backup_cm4.bin");
     fres = f_open(&backupFile, backupPath, FA_READ);
@@ -585,7 +561,7 @@ fwupdate_StatusTypeDef update_restoreBackupFirmwares(void)
     }
     f_close(&backupFile);
 
-    // Étape 3: Restaurer le firmware CM7 avec `update_writeFirmware`
+    // Step 3: Restore CM7 firmware using `update_writeFirmware`
     printf("Step 3: Restoring CM7 backup\n");
     snprintf(backupPath, sizeof(backupPath), "%s/%s", FW_PATH, "backup_cm7.bin");
     fres = f_open(&backupFile, backupPath, FA_READ);
@@ -606,7 +582,7 @@ fwupdate_StatusTypeDef update_restoreBackupFirmwares(void)
     f_close(&backupFile);
     printf("Successfully restored %s to 0x%08lX.\n", backupPath, (long unsigned int)FW_CM7_START_ADDR);
 
-    // Étape 4: Restaurer le firmware CM4 avec `update_writeFirmware`
+    // Step 4: Restore CM4 firmware using `update_writeFirmware`
     printf("Step 4: Restoring CM4 backup\n");
     snprintf(backupPath, sizeof(backupPath), "%s/%s", FW_PATH, "backup_cm4.bin");
     fres = f_open(&backupFile, backupPath, FA_READ);
@@ -629,6 +605,7 @@ fwupdate_StatusTypeDef update_restoreBackupFirmwares(void)
 
     return FWUPDATE_OK;
 }
+
 /**
  * @brief Processes a firmware update package file.
  * This function handles the full update process including CRC verification,
@@ -711,13 +688,6 @@ fwupdate_StatusTypeDef update_processPackageFile(const TCHAR* packageFilePath)
 		f_close(&file);
 		return FWUPDATE_ERROR;
 	}
-
-	// Déterminer la taille actuelle des firmwares en flash
-	uint32_t cm7_actual_size = update_getFirmwareSize(FW_CM7_START_ADDR, FW_CM7_MAX_SIZE);
-	uint32_t cm4_actual_size = update_getFirmwareSize(FW_CM4_START_ADDR, FW_CM4_MAX_SIZE);
-
-	printf("Current CM7 firmware size in flash: %lu bytes\n", cm7_actual_size);
-	printf("Current CM4 firmware size in flash: %lu bytes\n", cm4_actual_size);
 
 	// Step 2: Backup current CM7 firmware
 	printf("Step 2: Backup current CM7 firmware\n");
