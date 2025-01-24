@@ -15,7 +15,7 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "config.h"
+#include "gui_config.h"
 #include "basetypes.h"
 
 #include "stdlib.h"

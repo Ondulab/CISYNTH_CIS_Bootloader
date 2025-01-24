@@ -28,22 +28,16 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "basetypes.h"
-#include "stdio.h"
-#include "stdbool.h"
-
+#include "boot_config.h"
 #include "stm32_flash.h"
 #include "file_manager.h"
-#include "config.h"
-#include "globals.h"
+
 #include "update.h"
 #include "update_gui.h"
 
-#include "stm32h7xx_hal_flash_ex.h"
-#include "stm32h7xx_hal_flash.h"
-
-#include "ff.h" // FATFS include
-#include "diskio.h" // DiskIO include
+#include "basetypes.h"
+#include "stdio.h"
+#include "stdbool.h"
 
 /* USER CODE END Includes */
 

@@ -20,6 +20,7 @@
 #include "config.h"
 #include "basetypes.h"
 #include "globals.h"
+#include "boot_config.h"
 
 #include <stdlib.h>
 #include <stdio.h>
