@@ -154,7 +154,7 @@ void gui_displayUpdateSuccess(void)
 
 	ssd1362_drawString(0, DISPLAY_HEAD_Y1POS + 1, (int8_t *)"         FIRMWARE UPDATE        ", 0xF, 8);
 
-ssd1362_drawString(0, 25, (int8_t *)						"     FIRMWARE UPDATE SUCCESS    ", 0xF, 8);
+ssd1362_drawString(0, 25, (int8_t *)						"    FIRMWARE TESTING SUCCESS    ", 0xF, 8);
 
 	ssd1362_drawString(0, 45, (int8_t *)					"              REBOOT            ", 0xF, 8);
 

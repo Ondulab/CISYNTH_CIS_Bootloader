@@ -316,7 +316,6 @@ int main(void)
 		reboot();
 	}
 
-
 	if (dataRead == FW_UPDATE_DONE)
 	{
 		/* Reboot after we close the connection. */
